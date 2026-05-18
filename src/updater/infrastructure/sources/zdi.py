@@ -50,10 +50,14 @@ def parse_zdi_detail(html: str, detail_url: str) -> dict[str, Any]:
     description = _extract_description(soup, text)
     references = _extract_references(soup, detail_url)
 
+    cvss_score = float(cvss_match.group(1)) if cvss_match else None
+    if cvss_score is not None and not 0.0 <= cvss_score <= 10.0:
+        cvss_score = None
+
     return {
         "zdi_id": zdi_match.group(0).upper() if zdi_match else None,
         "cve_id": cve_match.group(0).upper() if cve_match else None,
-        "cvss_score": float(cvss_match.group(1)) if cvss_match else None,
+        "cvss_score": cvss_score,
         "severity": severity,
         "description": description,
         "references": references,
@@ -93,10 +97,14 @@ class ZdiSource:
 
         results: list[tuple[Vulnerability, dict[str, Any]]] = []
         for detail_url in parse_zdi_search_results(response.text):
-            detail_response = self._get(detail_url, timeout=30)
-            detail_response.raise_for_status()
-            raw = parse_zdi_detail(detail_response.text, detail_url)
-            vulnerability = normalize_zdi_advisory(raw)
+            try:
+                detail_response = self._get(detail_url, timeout=30)
+                detail_response.raise_for_status()
+                raw = parse_zdi_detail(detail_response.text, detail_url)
+                vulnerability = normalize_zdi_advisory(raw)
+            except Exception:
+                continue
+
             evidence = {"query": query, "url": detail_url, "zdi": raw}
             results.append((vulnerability, evidence))
 
@@ -104,7 +112,7 @@ class ZdiSource:
 
 
 def _extract_labeled_value(text: str, label: str) -> str | None:
-    pattern = re.compile(rf"\b{re.escape(label)}\b\s*:?\s*([^\n]+)", re.IGNORECASE)
+    pattern = re.compile(rf"^\s*{re.escape(label)}\s*:?\s*([^\n]+)", re.IGNORECASE | re.MULTILINE)
     match = pattern.search(text)
     if not match:
         return None
