@@ -35,9 +35,12 @@ def test_loads_aliases_and_version(tmp_path: Path):
     assert item.version.source_url == "https://example.test/release"
 
 
-def test_preserves_unknown_columns_as_raw_metadata(tmp_path: Path):
+def test_preserves_only_non_empty_unknown_columns_as_raw_metadata(tmp_path: Path):
     csv_path = tmp_path / "targets.csv"
-    csv_path.write_text("name,notes\nVMware Workstation,contest target\n", encoding="utf-8")
+    csv_path.write_text(
+        "name,notes,empty,spaces\nVMware Workstation,contest target,,   \n",
+        encoding="utf-8",
+    )
 
     rows = CsvTargetLoader().load(csv_path)
 

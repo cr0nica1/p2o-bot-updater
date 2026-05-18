@@ -74,8 +74,12 @@ def _split_aliases(value: str | None) -> list[str]:
     return [alias.strip() for alias in value.split(";") if alias.strip()]
 
 
-def _unknown_metadata(row: dict[str, str | None]) -> dict[str, str | None]:
-    return {column: value for column, value in row.items() if column not in KNOWN_COLUMNS}
+def _unknown_metadata(row: dict[str, str | None]) -> dict[str, str]:
+    return {
+        column: value.strip()
+        for column, value in row.items()
+        if column not in KNOWN_COLUMNS and value is not None and value.strip()
+    }
 
 
 def _version_from_row(row: dict[str, str | None]) -> TargetVersion | None:
