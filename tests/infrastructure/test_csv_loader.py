@@ -47,6 +47,17 @@ def test_preserves_only_non_empty_unknown_columns_as_raw_metadata(tmp_path: Path
     assert rows.items[0].target.raw_metadata == {"notes": "contest target"}
 
 
+def test_ignores_extra_unkeyed_fields_in_malformed_rows(tmp_path: Path):
+    csv_path = tmp_path / "targets.csv"
+    csv_path.write_text("name,notes\nTarget,ok,extra\n", encoding="utf-8")
+
+    rows = CsvTargetLoader().load(csv_path)
+
+    assert rows.errors == []
+    assert rows.items[0].target.name == "Target"
+    assert rows.items[0].target.raw_metadata == {"notes": "ok"}
+
+
 def test_skips_missing_name_rows(tmp_path: Path):
     csv_path = tmp_path / "targets.csv"
     csv_path.write_text("name,aliases\n,Alias Only\nValid Target,Alias\n", encoding="utf-8")

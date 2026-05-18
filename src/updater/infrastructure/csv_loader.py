@@ -78,7 +78,10 @@ def _unknown_metadata(row: dict[str, str | None]) -> dict[str, str]:
     return {
         column: value.strip()
         for column, value in row.items()
-        if column not in KNOWN_COLUMNS and value is not None and value.strip()
+        if column
+        and column not in KNOWN_COLUMNS
+        and isinstance(value, str)
+        and value.strip()
     }
 
 
