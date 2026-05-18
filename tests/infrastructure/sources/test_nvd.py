@@ -25,6 +25,23 @@ def test_normalize_nvd_item_extracts_required_fields():
     assert vulnerability.sources == ["nvd"]
 
 
+def test_normalize_nvd_item_extracts_cvss_v2_severity():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-5678",
+            "published": "2025-03-01T00:00:00.000",
+            "descriptions": [{"lang": "en", "value": "V2 test"}],
+            "references": {"referenceData": []},
+            "metrics": {
+                "cvssMetricV2": [{"cvssData": {"baseScore": 7.5}, "baseSeverity": "HIGH"}]
+            },
+        }
+    }
+    vulnerability = normalize_nvd_item(raw)
+    assert vulnerability.cvss_score == 7.5
+    assert vulnerability.severity == "high"
+
+
 def test_nvd_source_builds_query_request(monkeypatch):
     calls = []
 

@@ -41,9 +41,10 @@ def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
     for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
         entries = metrics.get(key)
         if entries:
-            data = entries[0].get("cvssData", {})
+            entry = entries[0]
+            data = entry.get("cvssData", {})
             cvss_score = data.get("baseScore")
-            sev = data.get("baseSeverity")
+            sev = data.get("baseSeverity") or entry.get("baseSeverity")
             if sev:
                 severity = sev.lower()
             break
