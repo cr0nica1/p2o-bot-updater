@@ -2,13 +2,17 @@ from updater.domain.models import Target
 from updater.infrastructure.sources.nvd import NvdSource, normalize_nvd_item
 
 
-def test_normalize_nvd_item_extracts_required_fields():
+def test_normalize_nvd_item_extracts_required_fields_with_nvd_2_references():
     raw = {
         "cve": {
             "id": "CVE-2025-1234",
             "published": "2025-01-02T03:04:05.000",
             "descriptions": [{"lang": "en", "value": "Example vulnerability"}],
-            "references": {"referenceData": [{"url": "https://example.test/ref"}]},
+            "references": [
+                {"url": "https://example.test/ref"},
+                {"url": ""},
+                {},
+            ],
             "metrics": {
                 "cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]
             },
@@ -23,6 +27,24 @@ def test_normalize_nvd_item_extracts_required_fields():
     assert vulnerability.description == "Example vulnerability"
     assert vulnerability.references == ["https://example.test/ref"]
     assert vulnerability.sources == ["nvd"]
+
+
+def test_normalize_nvd_item_extracts_legacy_reference_data():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "published": "2025-01-02T03:04:05.000",
+            "descriptions": [{"lang": "en", "value": "Example vulnerability"}],
+            "references": {"referenceData": [{"url": "https://example.test/ref"}]},
+            "metrics": {
+                "cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]
+            },
+        }
+    }
+
+    vulnerability = normalize_nvd_item(raw)
+
+    assert vulnerability.references == ["https://example.test/ref"]
 
 
 def test_normalize_nvd_item_extracts_cvss_v2_severity():
@@ -52,8 +74,13 @@ def test_nvd_source_builds_query_request(monkeypatch):
         def json(self):
             return {"vulnerabilities": []}
 
-    def fake_get(url, params, timeout):
-        calls.append((url, params, timeout))
+    def fake_get(url, **kwargs):
+        calls.append({
+            "url": url,
+            "params": kwargs.get("params"),
+            "timeout": kwargs.get("timeout"),
+            "headers": kwargs.get("headers"),
+        })
         return FakeResponse()
 
     source = NvdSource(get=fake_get)
@@ -61,6 +88,29 @@ def test_nvd_source_builds_query_request(monkeypatch):
     result = source.search(Target(name="Adobe Acrobat Reader"), "Adobe Reader")
 
     assert result == []
-    assert calls[0][0] == "https://services.nvd.nist.gov/rest/json/cves/2.0"
-    assert calls[0][1]["keywordSearch"] == "Adobe Reader"
-    assert calls[0][2] == 30
+    assert calls[0]["url"] == "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    assert calls[0]["params"]["keywordSearch"] == "Adobe Reader"
+    assert "apiKey" not in calls[0]["params"]
+    assert calls[0]["timeout"] == 30
+
+
+def test_nvd_source_sends_api_key_as_header():
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"vulnerabilities": []}
+
+    def fake_get(url, **kwargs):
+        calls.append(kwargs)
+        return FakeResponse()
+
+    source = NvdSource(get=fake_get, api_key="test-secret-key")
+    result = source.search(Target(name="Adobe Acrobat Reader"), "Adobe Reader")
+
+    assert result == []
+    assert calls[0]["headers"] == {"apiKey": "test-secret-key"}
+    assert "apiKey" not in calls[0]["params"]

@@ -27,12 +27,18 @@ def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
             description = desc.get("value")
             break
 
-    # --- references ---
-    references: list[str] = [
-        ref.get("url")
-        for ref in cve.get("references", {}).get("referenceData", [])
-        if ref.get("url")
-    ]
+    # --- references (NVD API 2.0 list or legacy referenceData dict) ---
+    raw_refs = cve.get("references", [])
+    if isinstance(raw_refs, list):
+        references: list[str] = [
+            ref.get("url") for ref in raw_refs if ref.get("url")
+        ]
+    else:
+        references: list[str] = [
+            ref.get("url")
+            for ref in raw_refs.get("referenceData", [])
+            if ref.get("url")
+        ]
 
     # --- CVSS metrics (try v3.1, then v3.0, then v2) ---
     cvss_score: float | None = None
@@ -75,13 +81,12 @@ class NvdSource:
         self._api_key = api_key
 
     def search(
-        self, target: Target, query: str
+        self, _target: Target, query: str
     ) -> list[tuple[Vulnerability, dict[str, Any]]]:
         params: dict[str, Any] = {"keywordSearch": query}
-        if self._api_key:
-            params["apiKey"] = self._api_key
+        headers = {"apiKey": self._api_key} if self._api_key else None
 
-        response = self._get(NVD_CVES_URL, params=params, timeout=30)
+        response = self._get(NVD_CVES_URL, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         payload = response.json()
 
