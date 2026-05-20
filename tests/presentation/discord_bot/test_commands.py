@@ -1,5 +1,3 @@
-import pytest
-
 from updater.domain.models import Target, TargetVulnerability, Vulnerability
 from updater.presentation.discord_bot.commands import (
     CommandResult,
@@ -77,7 +75,7 @@ class FakeLinkRepo:
 
     def delete_by_target(self, target_id):
         before = len(self.links)
-        self.links = [l for l in self.links if l.target_id != target_id]
+        self.links = [link for link in self.links if link.target_id != target_id]
         return before - len(self.links)
 
 
@@ -238,11 +236,17 @@ async def test_sync_cves_returns_embeds_for_findings():
     assert result.embeds[0].title == "CVE-2024-1"
 
 
+async def test_sync_cves_unknown_target_returns_not_found():
+    services = _services(sources=[_FakeSource()])
+    result = await handle_sync_cves(services, target_name="Unknown")
+    assert "not found" in result.text.lower()
+    assert result.embeds == []
+
+
 async def test_set_schedule_writes_env(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("DISCORD_TOKEN=tok\nSYNC_TIME=08:00\nNOTIFY_TIME=09:00\n")
     result = await handle_set_schedule(
-        _services(),
         env_path=env_file,
         sync_time="10:15",
         notify_time="11:30",
@@ -256,7 +260,6 @@ async def test_set_schedule_rejects_invalid(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("DISCORD_TOKEN=tok\n")
     result = await handle_set_schedule(
-        _services(),
         env_path=env_file,
         sync_time="25:00",
         notify_time="09:00",

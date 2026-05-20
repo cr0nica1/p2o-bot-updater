@@ -136,7 +136,7 @@ async def handle_add_vuln(
     services: Services,
     *,
     advisory_id: str,
-    description: str,
+    description: str | None,
     cvss_score: float | None,
     severity: str | None,
     references: list[str],
@@ -171,6 +171,8 @@ async def handle_add_vuln(
 
 
 async def handle_sync_cves(services: Services, *, target_name: str | None) -> CommandResult:
+    if target_name is not None and services.target_repo.find_by_name(target_name) is None:
+        return CommandResult(text=f"Target {target_name!r} not found.")
     sync = SyncVulnerabilitiesService(
         services.target_repo,
         services.vulnerability_repo,
@@ -201,7 +203,6 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
 
 
 async def handle_set_schedule(
-    services: Services,
     *,
     env_path: Path,
     sync_time: str,
