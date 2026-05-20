@@ -107,6 +107,7 @@ class Vulnerability:
 class TargetVulnerability:
     target_id: str
     vulnerability_id: str
+    target_name: str | None = None
     affected_versions: list[str] = field(default_factory=list)
     fixed_versions: list[str] = field(default_factory=list)
     matched_queries: list[str] = field(default_factory=list)

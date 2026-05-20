@@ -1,5 +1,5 @@
 from updater.domain.models import Target
-from updater.infrastructure.sources.nvd import NvdSource, normalize_nvd_item
+from updater.infrastructure.sources.nvd import NvdSource, normalize_nvd_item, strip_cpe_from_raw, strip_non_english_descriptions, strip_non_nist_cvss_metrics
 
 
 def test_normalize_nvd_item_extracts_required_fields_with_nvd_2_references():
@@ -64,6 +64,166 @@ def test_normalize_nvd_item_extracts_cvss_v2_severity():
     assert vulnerability.severity == "high"
 
 
+def test_strip_cpe_from_raw_removes_configurations():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "configurations": [
+                {
+                    "nodes": [
+                        {
+                            "cpeMatch": [
+                                {"criteria": "cpe:2.3:a:adobe:acrobat_reader:*:*:*:*:*:*:*:*", "vulnerable": True}
+                            ]
+                        }
+                    ]
+                }
+            ],
+        }
+    }
+
+    cleaned = strip_cpe_from_raw(raw)
+
+    assert "configurations" not in cleaned["cve"]
+    assert "configurations" in raw["cve"]
+
+
+def test_nvd_source_evidence_excludes_cpe_configurations():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "published": "2025-01-02T03:04:05.000",
+            "descriptions": [{"lang": "en", "value": "Example"}],
+            "references": [],
+            "metrics": {
+                "cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]
+            },
+            "configurations": [
+                {
+                    "nodes": [
+                        {
+                            "cpeMatch": [
+                                {"criteria": "cpe:2.3:a:adobe:acrobat_reader:*:*:*:*:*:*:*:*", "vulnerable": True}
+                            ]
+                        }
+                    ]
+                }
+            ],
+        }
+    }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"vulnerabilities": [raw]}
+
+    def fake_get(url, **kwargs):
+        return FakeResponse()
+
+    source = NvdSource(get=fake_get)
+    results = source.search(Target(name="Adobe Reader"), "Adobe Reader")
+
+    assert len(results) == 1
+    vulnerability, evidence = results[0]
+    assert "configurations" not in vulnerability.raw["nvd"]["cve"]
+    assert "configurations" not in evidence["nvd"]["cve"]
+
+
+def test_strip_non_nist_cvss_metrics_keeps_only_nist():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "metrics": {
+                "cvssMetricV31": [
+                    {"source": "psirt@cisco.com", "cvssData": {"baseScore": 9.1, "baseSeverity": "CRITICAL"}, "type": "Secondary"},
+                    {"source": "nvd@nist.gov", "cvssData": {"baseScore": 8.8, "baseSeverity": "HIGH"}, "type": "Primary"},
+                ],
+                "cvssMetricV2": [
+                    {"source": "psirt@cisco.com", "cvssData": {"baseScore": 6.8}, "type": "Secondary"},
+                ],
+            },
+        }
+    }
+
+    cleaned = strip_non_nist_cvss_metrics(raw)
+
+    v31 = cleaned["cve"]["metrics"]["cvssMetricV31"]
+    assert len(v31) == 1
+    assert v31[0]["source"] == "nvd@nist.gov"
+    assert "cvssMetricV2" not in cleaned["cve"]["metrics"]
+
+
+def test_normalize_nvd_prefers_nist_cvss_over_third_party():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "published": "2025-01-02T03:04:05.000",
+            "descriptions": [{"lang": "en", "value": "Example"}],
+            "references": [],
+            "metrics": {
+                "cvssMetricV31": [
+                    {"source": "psirt@cisco.com", "cvssData": {"baseScore": 9.1, "baseSeverity": "CRITICAL"}},
+                    {"source": "nvd@nist.gov", "cvssData": {"baseScore": 8.8, "baseSeverity": "HIGH"}},
+                ],
+            },
+        }
+    }
+
+    vulnerability = normalize_nvd_item(raw)
+
+    assert vulnerability.cvss_score == 8.8
+    assert vulnerability.severity == "high"
+    # raw also stripped non-NIST entries
+    assert len(vulnerability.raw["nvd"]["cve"]["metrics"]["cvssMetricV31"]) == 1
+
+
+def test_strip_non_english_descriptions_from_raw():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "descriptions": [
+                {"lang": "en", "value": "Buffer overflow in Adobe Reader"},
+                {"lang": "es", "value": "Desbordamiento de búfer en Adobe Reader"},
+                {"lang": "fr", "value": "Dépassement de mémoire tampon dans Adobe Reader"},
+                {"lang": "ja", "value": "Adobe Reader のバッファオーバーフロー"},
+            ],
+        }
+    }
+
+    cleaned = strip_non_english_descriptions(raw)
+
+    descs = cleaned["cve"]["descriptions"]
+    assert len(descs) == 1
+    assert descs[0]["lang"] == "en"
+    assert descs[0]["value"] == "Buffer overflow in Adobe Reader"
+
+
+def test_normalize_nvd_item_strips_non_english_from_raw():
+    raw = {
+        "cve": {
+            "id": "CVE-2025-1234",
+            "published": "2025-01-02T03:04:05.000",
+            "descriptions": [
+                {"lang": "en", "value": "English description"},
+                {"lang": "es", "value": "Spanish description"},
+            ],
+            "references": [],
+            "metrics": {
+                "cvssMetricV31": [{"cvssData": {"baseScore": 7.5, "baseSeverity": "HIGH"}}]
+            },
+        }
+    }
+
+    vulnerability = normalize_nvd_item(raw)
+
+    assert vulnerability.description == "English description"
+    raw_descs = vulnerability.raw["nvd"]["cve"]["descriptions"]
+    assert len(raw_descs) == 1
+    assert raw_descs[0]["lang"] == "en"
+
+
 def test_nvd_source_builds_query_request(monkeypatch):
     calls = []
 
@@ -85,11 +245,13 @@ def test_nvd_source_builds_query_request(monkeypatch):
 
     source = NvdSource(get=fake_get)
 
-    result = source.search(Target(name="Adobe Acrobat Reader"), "Adobe Reader")
+    result = source.search(Target(name="Adobe Acrobat Reader"), "Adobe Reader", since_year=2026)
 
     assert result == []
     assert calls[0]["url"] == "https://services.nvd.nist.gov/rest/json/cves/2.0"
     assert calls[0]["params"]["keywordSearch"] == "Adobe Reader"
+    assert calls[0]["params"]["keywordExactMatch"] == ""
+    assert calls[0]["params"]["pubStartDate"] == "2026-01-01T00:00:00.000"
     assert "apiKey" not in calls[0]["params"]
     assert calls[0]["timeout"] == 30
 

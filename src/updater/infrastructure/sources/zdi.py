@@ -11,13 +11,53 @@ import requests
 from updater.domain.models import Target, Vulnerability
 
 ZDI_BASE_URL = "https://www.zerodayinitiative.com"
-ZDI_ADVISORIES_URL = f"{ZDI_BASE_URL}/advisories/"
+ZDI_ADVISORIES_URL = f"{ZDI_BASE_URL}/advisories/published/"
+ZDI_FIRST_PUBLISHED_YEAR = 2020
 
 _ZDI_ID_RE = re.compile(r"\bZDI-(?:CAN-)?\d{2,5}-\d{3,5}\b|\bZDI-CAN-\d{4,7}\b", re.IGNORECASE)
 _CVE_ID_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 _CVSS_RE = re.compile(r"\bCVSS(?:\s+(?:Score|v3(?:\.\d)?))?\s*:?\s*(\d+(?:\.\d+)?)\b", re.IGNORECASE)
 _SEVERITY_RE = re.compile(r"\b(Critical|High|Medium|Low|Informational)\b", re.IGNORECASE)
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|[A-Z][a-z]+\s+\d{1,2},\s+\d{4})\b")
+
+
+def parse_zdi_published_rows(html: str) -> list[dict[str, Any]]:
+    soup = BeautifulSoup(html, "html.parser")
+    rows: list[dict[str, Any]] = []
+
+    for table_row in soup.find_all("tr"):
+        cells = [cell.get_text(" ", strip=True) for cell in table_row.find_all(("td", "th"))]
+        if len(cells) < 8:
+            continue
+
+        zdi_match = _ZDI_ID_RE.search(cells[0])
+        if not zdi_match:
+            continue
+
+        anchor = table_row.find("a", href=True)
+        detail_url = urljoin(ZDI_BASE_URL, anchor["href"]) if anchor else None
+        cvss_score = _parse_cvss(cells[4])
+        cve_match = _CVE_ID_RE.search(cells[3])
+        zdi_can_match = _ZDI_ID_RE.search(cells[1])
+        published_date = cells[6].strip() or None
+        description = cells[7].strip() or None
+
+        rows.append(
+            {
+                "zdi_id": zdi_match.group(0).upper(),
+                "zdi_can_id": zdi_can_match.group(0).upper() if zdi_can_match else None,
+                "vendor": cells[2].strip() or None,
+                "cve_id": cve_match.group(0).upper() if cve_match else None,
+                "cvss_score": cvss_score,
+                "severity": _severity_from_cvss(cvss_score),
+                "description": description,
+                "references": _unique([detail_url]) if detail_url else None,
+                "published_date": published_date,
+                "detail_url": detail_url,
+            }
+        )
+
+    return rows
 
 
 def parse_zdi_search_results(html: str) -> list[str]:
@@ -77,7 +117,7 @@ def normalize_zdi_advisory(raw: dict[str, Any]) -> Vulnerability:
         cvss_score=raw.get("cvss_score"),
         severity=severity.lower() if isinstance(severity, str) else None,
         description=raw.get("description"),
-        references=raw.get("references", []),
+        references=raw.get("references") or [],
         published_date=published_date,
         raw=raw,
     )
@@ -90,17 +130,69 @@ class ZdiSource:
         self._get = get or requests.get
 
     def search(
-        self, _target: Target, query: str
+        self, _target: Target, query: str, since_year: int | None = None
     ) -> list[tuple[Vulnerability, dict[str, Any]]]:
-        response = self._get(ZDI_ADVISORIES_URL, params={"q": query}, timeout=30)
-        response.raise_for_status()
+        html_pages: list[str] = []
+        published_rows: list[dict[str, Any]] = []
+        for year in range(since_year or ZDI_FIRST_PUBLISHED_YEAR, datetime.now().year + 1):
+            response = self._get(f"{ZDI_ADVISORIES_URL}{year}/", timeout=30)
+            response.raise_for_status()
+            html_pages.append(response.text)
+            published_rows.extend(parse_zdi_published_rows(response.text))
+
+        if published_rows:
+            return self._search_published_rows(query, published_rows)
 
         results: list[tuple[Vulnerability, dict[str, Any]]] = []
-        for detail_url in parse_zdi_search_results(response.text):
+        for html in html_pages:
+            results.extend(self._search_detail_pages(query, html))
+        return results
+
+    def _search_published_rows(
+        self, query: str, rows: list[dict[str, Any]]
+    ) -> list[tuple[Vulnerability, dict[str, Any]]]:
+        query_lower = query.lower()
+        results: list[tuple[Vulnerability, dict[str, Any]]] = []
+        for row in rows:
+            searchable = " ".join(
+                filter(None, [row.get("vendor"), row.get("description") or row.get("zdi_id")])
+            ).lower()
+            if query_lower not in searchable:
+                continue
+
+            raw = self._with_detail_description(row)
+            vulnerability = normalize_zdi_advisory(raw)
+            evidence = {"query": query, "url": raw["detail_url"], "zdi": raw}
+            results.append((vulnerability, evidence))
+
+        return results
+
+    def _with_detail_description(self, row: dict[str, Any]) -> dict[str, Any]:
+        detail_url = row.get("detail_url")
+        if not detail_url:
+            return row
+        try:
+            response = self._get(detail_url, timeout=30)
+            response.raise_for_status()
+            detail = parse_zdi_detail(response.text, detail_url)
+        except Exception:
+            return row
+        description = detail.get("description")
+        if not description:
+            return row
+        return {**row, "description": description}
+
+    def _search_detail_pages(
+        self, query: str, html: str
+    ) -> list[tuple[Vulnerability, dict[str, Any]]]:
+        results: list[tuple[Vulnerability, dict[str, Any]]] = []
+        for detail_url in parse_zdi_search_results(html):
             try:
                 detail_response = self._get(detail_url, timeout=30)
                 detail_response.raise_for_status()
                 raw = parse_zdi_detail(detail_response.text, detail_url)
+                if raw.get("cve_id"):
+                    continue
                 vulnerability = normalize_zdi_advisory(raw)
             except Exception:
                 continue
@@ -125,12 +217,33 @@ def _extract_severity(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _severity_from_cvss(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 9.0:
+        return "Critical"
+    if score >= 7.0:
+        return "High"
+    if score >= 4.0:
+        return "Medium"
+    if score > 0.0:
+        return "Low"
+    return None
+
+
 def _extract_date(text: str) -> str | None:
     match = _DATE_RE.search(text)
     return match.group(1) if match else None
 
 
 def _extract_description(soup: BeautifulSoup, text: str) -> str | None:
+    for td in soup.find_all("td", string=_vulnerability_details_match):
+        sibling = td.find_next_sibling("td")
+        if sibling:
+            value = sibling.get_text(" ", strip=True)
+            if value:
+                return value
+
     for selector in ("meta[name='description']", "meta[property='og:description']"):
         tag = soup.select_one(selector)
         if tag and tag.get("content"):
@@ -142,6 +255,10 @@ def _extract_description(soup: BeautifulSoup, text: str) -> str | None:
 
     paragraphs = [paragraph.get_text(" ", strip=True) for paragraph in soup.find_all("p")]
     return next((paragraph for paragraph in paragraphs if paragraph), None)
+
+
+def _vulnerability_details_match(text: str | None) -> bool:
+    return bool(text and text.strip().upper() == "VULNERABILITY DETAILS")
 
 
 def _extract_references(soup: BeautifulSoup, detail_url: str) -> list[str]:
@@ -181,3 +298,11 @@ def _unique(values: list[str]) -> list[str]:
             seen.add(cleaned)
             result.append(cleaned)
     return result
+
+
+def _parse_cvss(text: str) -> float | None:
+    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    if not match:
+        return None
+    score = float(match.group(1))
+    return score if 0.0 <= score <= 10.0 else None

@@ -44,6 +44,12 @@ def test_target_version_allows_missing_version():
     assert version.version_type is None
 
 
+def test_target_vulnerability_stores_target_name():
+    link = TargetVulnerability(target_id="target-1", vulnerability_id="vuln-1", target_name="Adobe Reader")
+
+    assert link.target_name == "Adobe Reader"
+
+
 def test_target_vulnerability_merges_evidence_without_duplicates():
     link = TargetVulnerability(target_id="target-1", vulnerability_id="vuln-1")
 

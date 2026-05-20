@@ -40,6 +40,12 @@ def build_parser() -> ArgumentParser:
     export_json_parser = subparsers.add_parser("export-json")
     export_json_parser.add_argument("--out", required=True)
 
+    clear_data_parser = subparsers.add_parser("clear-data")
+    clear_data_parser.add_argument("--yes", action="store_true")
+
+    clear_targets_parser = subparsers.add_parser("clear-targets")
+    clear_targets_parser.add_argument("--yes", action="store_true")
+
     return parser
 
 
@@ -58,7 +64,7 @@ def run_command(args: Namespace) -> int:
 
     if args.command == "import-targets":
         load_result = CsvTargetLoader().load(Path(args.targets))
-        import_result = ImportTargetsService(target_repo, version_repo).import_items(
+        import_result = ImportTargetsService(target_repo, version_repo, progress=print).import_items(
             [(item.target, item.version) for item in load_result.items]
         )
         print(
@@ -72,7 +78,7 @@ def run_command(args: Namespace) -> int:
 
     if args.command == "sync":
         load_result = CsvTargetLoader().load(Path(args.targets))
-        import_result = ImportTargetsService(target_repo, version_repo).import_items(
+        import_result = ImportTargetsService(target_repo, version_repo, progress=print).import_items(
             [(item.target, item.version) for item in load_result.items]
         )
         sync_result = SyncVulnerabilitiesService(
@@ -80,6 +86,7 @@ def run_command(args: Namespace) -> int:
             vulnerability_repo,
             target_vulnerability_repo,
             [NvdSource(), ZdiSource()],
+            progress=print,
         ).sync_all()
         errors = [*load_result.errors, *sync_result.errors]
         print(
@@ -100,6 +107,7 @@ def run_command(args: Namespace) -> int:
             vulnerability_repo,
             target_vulnerability_repo,
             [NvdSource(), ZdiSource()],
+            progress=print,
         )
         sync_result = service.sync_one(args.target) if args.target else service.sync_all()
         print(
@@ -121,6 +129,27 @@ def run_command(args: Namespace) -> int:
         snapshot = ExportService(target_repo, vulnerability_repo, target_vulnerability_repo).snapshot()
         JsonExporter().write(Path(args.out), snapshot)
         print(f"exported={args.out}")
+        return 0
+
+    if args.command == "clear-data":
+        if not args.yes:
+            print("refusing to delete all data without --yes")
+            return 1
+        counts = {
+            "targets": target_repo.delete_all(),
+            "versions": version_repo.delete_all(),
+            "vulnerabilities": vulnerability_repo.delete_all(),
+            "links": target_vulnerability_repo.delete_all(),
+        }
+        print(f"deleted targets={counts['targets']} versions={counts['versions']} vulnerabilities={counts['vulnerabilities']} links={counts['links']}")
+        return 0
+
+    if args.command == "clear-targets":
+        if not args.yes:
+            print("refusing to delete all targets without --yes")
+            return 1
+        count = target_repo.delete_all()
+        print(f"deleted targets={count}")
         return 0
 
     print(f"unsupported command: {args.command}")

@@ -20,3 +20,24 @@ def test_parser_accepts_export_json_output():
 
     assert args.command == "export-json"
     assert args.out == "output.json"
+
+
+def test_parser_accepts_clear_data_with_yes():
+    args = build_parser().parse_args(["clear-data", "--yes"])
+
+    assert args.command == "clear-data"
+    assert args.yes is True
+
+
+def test_parser_rejects_clear_data_without_yes():
+    args = build_parser().parse_args(["clear-data"])
+
+    assert args.command == "clear-data"
+    assert args.yes is False
+
+
+def test_parser_accepts_clear_targets_with_yes():
+    args = build_parser().parse_args(["clear-targets", "--yes"])
+
+    assert args.command == "clear-targets"
+    assert args.yes is True

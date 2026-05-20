@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, Callable
 
@@ -11,7 +12,8 @@ NVD_CVES_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 
 def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
-    cve = item.get("cve", item)
+    cleaned = strip_non_english_descriptions(strip_non_nist_cvss_metrics(strip_cpe_from_raw(item)))
+    cve = cleaned.get("cve", cleaned)
     cve_id: str = cve.get("id", "")
 
     # --- published date ---
@@ -44,7 +46,7 @@ def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
     cvss_score: float | None = None
     severity: str | None = None
     metrics = cve.get("metrics", {})
-    for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+    for key in _NVD_METRIC_KEYS:
         entries = metrics.get(key)
         if entries:
             entry = entries[0]
@@ -64,8 +66,49 @@ def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
         description=description,
         references=references,
         published_date=published_date,
-        raw=item,
+        raw=cleaned,
     )
+
+
+def strip_cpe_from_raw(item: dict[str, Any]) -> dict[str, Any]:
+    cleaned = deepcopy(item)
+    cve = cleaned.get("cve", cleaned)
+    cve.pop("configurations", None)
+    return cleaned
+
+
+def strip_non_english_descriptions(item: dict[str, Any]) -> dict[str, Any]:
+    cleaned = deepcopy(item)
+    cve = cleaned.get("cve", cleaned)
+    descriptions = cve.get("descriptions")
+    if isinstance(descriptions, list):
+        cve["descriptions"] = [d for d in descriptions if d.get("lang") == "en"]
+    return cleaned
+
+
+_NIST_SOURCES = {"nvd@nist.gov"}
+
+_NVD_METRIC_KEYS = ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
+
+
+def strip_non_nist_cvss_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    cleaned = deepcopy(item)
+    cve = cleaned.get("cve", cleaned)
+    metrics = cve.get("metrics")
+    if not metrics:
+        return cleaned
+    for key in list(metrics.keys()):
+        entries = metrics.get(key)
+        if not isinstance(entries, list):
+            continue
+        nist_entries = [e for e in entries if e.get("source") in _NIST_SOURCES]
+        if nist_entries:
+            metrics[key] = nist_entries
+        elif all("source" not in e for e in entries):
+            metrics[key] = entries
+        else:
+            del metrics[key]
+    return cleaned
 
 
 class NvdSource:
@@ -81,9 +124,11 @@ class NvdSource:
         self._api_key = api_key
 
     def search(
-        self, _target: Target, query: str
+        self, _target: Target, query: str, since_year: int | None = None
     ) -> list[tuple[Vulnerability, dict[str, Any]]]:
-        params: dict[str, Any] = {"keywordSearch": query}
+        params: dict[str, Any] = {"keywordSearch": query, "keywordExactMatch": ""}
+        if since_year is not None:
+            params["pubStartDate"] = f"{since_year}-01-01T00:00:00.000"
         headers = {"apiKey": self._api_key} if self._api_key else None
 
         response = self._get(NVD_CVES_URL, params=params, headers=headers, timeout=30)
@@ -92,7 +137,8 @@ class NvdSource:
 
         results: list[tuple[Vulnerability, dict[str, Any]]] = []
         for item in payload.get("vulnerabilities", []):
-            vulnerability = normalize_nvd_item(item)
-            evidence = {"query": query, "nvd": item}
+            cleaned = strip_non_nist_cvss_metrics(strip_cpe_from_raw(item))
+            vulnerability = normalize_nvd_item(cleaned)
+            evidence = {"query": query, "nvd": cleaned}
             results.append((vulnerability, evidence))
         return results

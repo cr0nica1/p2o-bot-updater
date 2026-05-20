@@ -115,6 +115,7 @@ def target_vulnerability_to_document(link: TargetVulnerability) -> dict[str, Any
     return {
         "target_id": link.target_id,
         "vulnerability_id": link.vulnerability_id,
+        "target_name": link.target_name,
         "affected_versions": list(link.affected_versions),
         "fixed_versions": list(link.fixed_versions),
         "matched_queries": list(link.matched_queries),
@@ -129,6 +130,7 @@ def target_vulnerability_from_document(document: dict[str, Any]) -> TargetVulner
         id=_document_id(document),
         target_id=document["target_id"],
         vulnerability_id=document["vulnerability_id"],
+        target_name=document.get("target_name"),
         affected_versions=list(document.get("affected_versions", [])),
         fixed_versions=list(document.get("fixed_versions", [])),
         matched_queries=list(document.get("matched_queries", [])),
@@ -139,7 +141,8 @@ def target_vulnerability_from_document(document: dict[str, Any]) -> TargetVulner
 
 
 def _as_collection(db_or_collection: Any, collection_name: str) -> Any:
-    if hasattr(db_or_collection, "find_one_and_update"):
+    type_name = type(db_or_collection).__name__
+    if type_name == "Collection":
         return db_or_collection
     return getattr(db_or_collection, collection_name)
 
@@ -194,6 +197,9 @@ class MongoTargetRepository:
         document = self.collection.find_one({"normalized_name": normalize_name(name)})
         return target_from_document(document) if document else None
 
+    def delete_all(self) -> int:
+        return self.collection.delete_many({}).deleted_count
+
 
 class MongoTargetVersionRepository:
     def __init__(self, db: Any) -> None:
@@ -214,6 +220,9 @@ class MongoTargetVersionRepository:
         )
         return target_version_from_document(updated)
 
+    def delete_all(self) -> int:
+        return self.collection.delete_many({}).deleted_count
+
 
 class MongoVulnerabilityRepository:
     def __init__(self, db: Any) -> None:
@@ -222,16 +231,62 @@ class MongoVulnerabilityRepository:
     def upsert(self, vulnerability: Vulnerability) -> Vulnerability:
         document = vulnerability_to_document(vulnerability)
         created_at = document.pop("created_at")
-        updated = self.collection.find_one_and_update(
-            {"advisory_id": document["advisory_id"]},
-            {"$set": document, "$setOnInsert": {"created_at": created_at}},
-            upsert=True,
-            return_document=_return_document_after(),
-        )
-        return vulnerability_from_document(updated)
+        existing = self.collection.find_one({"advisory_id": document["advisory_id"]})
+        if existing is not None:
+            merged = merge_vulnerability_documents(existing, document)
+            self.collection.replace_one(
+                {"advisory_id": document["advisory_id"]}, merged
+            )
+            return vulnerability_from_document(merged)
+        document["created_at"] = created_at
+        self.collection.insert_one(document)
+        return vulnerability_from_document(document)
 
     def list_all(self) -> list[Vulnerability]:
         return [vulnerability_from_document(document) for document in self.collection.find().sort("advisory_id", ASCENDING)]
+
+    def delete_all(self) -> int:
+        return self.collection.delete_many({}).deleted_count
+
+
+def merge_vulnerability_documents(
+    existing: dict[str, Any], incoming: dict[str, Any]
+) -> dict[str, Any]:
+    merged = dict(existing)
+
+    for key in ("sources", "aliases", "references"):
+        existing_list: list = list(merged.get(key, []))
+        incoming_list: list = incoming.get(key, []) or []
+        seen = set()
+        combined: list = []
+        for item in existing_list + incoming_list:
+            if item not in seen:
+                seen.add(item)
+                combined.append(item)
+        merged[key] = combined
+
+    existing_raw: dict = dict(merged.get("raw", {}) or {})
+    incoming_raw: dict = incoming.get("raw", {}) or {}
+    existing_raw.update(incoming_raw)
+    merged["raw"] = existing_raw
+
+    existing_desc = merged.get("description") or ""
+    incoming_desc = incoming.get("description") or ""
+    combined_sources = set(merged.get("sources", [])) | set(incoming.get("sources", []))
+    if "zdi" in combined_sources:
+        zdi_desc = incoming_desc if "zdi" in (incoming.get("sources", []) or []) else existing_desc
+        nvd_desc = incoming_desc if zdi_desc != incoming_desc else existing_desc
+        merged["description"] = zdi_desc or nvd_desc
+    elif incoming_desc:
+        merged["description"] = incoming_desc
+    else:
+        merged["description"] = existing_desc
+
+    for key in ("cvss_score", "severity", "published_date", "updated_at"):
+        if incoming.get(key) is not None:
+            merged[key] = incoming[key]
+
+    return merged
 
 
 class MongoTargetVulnerabilityRepository:
@@ -251,3 +306,6 @@ class MongoTargetVulnerabilityRepository:
 
     def list_all(self) -> list[TargetVulnerability]:
         return [target_vulnerability_from_document(document) for document in self.collection.find()]
+
+    def delete_all(self) -> int:
+        return self.collection.delete_many({}).deleted_count

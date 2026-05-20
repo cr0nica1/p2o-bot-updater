@@ -28,4 +28,6 @@ class TargetVulnerabilityRepository(Protocol):
 class VulnerabilitySource(Protocol):
     source_name: str
 
-    def search(self, target: Target, query: str) -> list[tuple[Vulnerability, dict]]: ...
+    def search(
+        self, target: Target, query: str, since_year: int | None = None
+    ) -> list[tuple[Vulnerability, dict]]: ...

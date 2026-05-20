@@ -53,3 +53,21 @@ def test_import_targets_allows_no_version():
     assert result.targets_imported == 1
     assert result.versions_imported == 0
     assert version_repo.versions == []
+
+
+def test_import_targets_reports_progress_events():
+    events = []
+    target_repo = FakeTargetRepository()
+    version_repo = FakeTargetVersionRepository()
+    service = ImportTargetsService(target_repo, version_repo, progress=events.append)
+
+    service.import_items([
+        (Target(name="Adobe Acrobat Reader"), TargetVersion(version="2024.005.20320", version_type="software"))
+    ])
+
+    assert events == [
+        "import_targets:start total=1",
+        "import_targets:target_upsert name=Adobe Acrobat Reader",
+        "import_targets:version_upsert target=Adobe Acrobat Reader version=2024.005.20320 type=software",
+        "import_targets:done targets_imported=1 versions_imported=1 errors=0",
+    ]
