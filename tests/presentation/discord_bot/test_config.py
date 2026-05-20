@@ -109,3 +109,26 @@ def test_update_schedule_validates_format(tmp_path):
     env_file.write_text("DISCORD_TOKEN=tok\n")
     with pytest.raises(ConfigError):
         update_schedule(env_file, sync_time="bad", notify_time="11:30")
+
+
+def test_load_config_missing_file_raises(tmp_path):
+    missing = tmp_path / "nope.env"
+    with pytest.raises(ConfigError, match="not found"):
+        load_config(missing)
+
+
+def test_update_schedule_deduplicates_existing_keys(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "SYNC_TIME=08:00\n"
+        "SYNC_TIME=09:00\n"
+        "NOTIFY_TIME=10:00\n"
+    )
+
+    update_schedule(env_file, sync_time="11:00", notify_time="12:00")
+
+    text = env_file.read_text()
+    assert text.count("SYNC_TIME=") == 1
+    assert text.count("NOTIFY_TIME=") == 1
+    assert "SYNC_TIME=11:00" in text
+    assert "NOTIFY_TIME=12:00" in text

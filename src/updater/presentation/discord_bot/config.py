@@ -44,6 +44,8 @@ def parse_time(value: str) -> tuple[int, int]:
 
 
 def load_config(env_path: Path) -> BotConfig:
+    if not env_path.exists():
+        raise ConfigError(f".env file not found: {env_path}")
     values = dotenv_values(env_path)
 
     def _require(key: str) -> str:
@@ -99,6 +101,8 @@ def update_schedule(env_path: Path, *, sync_time: str, notify_time: str) -> None
             continue
         key = stripped.split("=", 1)[0].strip()
         if key in updates:
+            if key in seen:
+                continue  # drop duplicate occurrence
             new_lines.append(f"{key}={updates[key]}")
             seen.add(key)
         else:
