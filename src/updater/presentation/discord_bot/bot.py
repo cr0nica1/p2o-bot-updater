@@ -105,10 +105,10 @@ def build_client(config: BotConfig) -> discord.Client:
     async def import_targets(interaction: discord.Interaction, file: discord.Attachment):
         if not await _admin_only(interaction):
             return
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         data = await file.read()
         result = await cmd.handle_import_targets(services, csv_bytes=data)
-        await interaction.followup.send(content=result.text)
+        await interaction.followup.send(content=result.text, ephemeral=True)
 
     @tree.command(name="add-vuln", description="Manually add a vulnerability", guild=guild)
     @app_commands.describe(
@@ -198,7 +198,9 @@ def build_client(config: BotConfig) -> discord.Client:
                 if event == "sync":
                     await _run_sync(services)
                 elif event == "notify":
-                    if channel is not None:
+                    if channel is None:
+                        log.warning("notify channel %s not found, skipping tick", config.channel_id)
+                    else:
                         await _run_notify(services, channel)
         except Exception:
             log.exception("scheduler tick failed")
@@ -262,9 +264,16 @@ async def _run_notify(services: cmd.Services, channel) -> None:
         new_findings=len(findings),
         errors=0,
     )
-    await channel.send(content=summary)
+    try:
+        await channel.send(content=summary)
+    except Exception:
+        log.exception("scheduled notify: summary send failed")
+        return
     for finding in findings:
-        await channel.send(embed=build_finding_embed(finding))
+        try:
+            await channel.send(embed=build_finding_embed(finding))
+        except Exception:
+            log.exception("scheduled notify: finding send failed advisory=%s", finding.get("advisory_id"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -276,5 +285,5 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
     client = build_client(config)
-    client.run(config.discord_token)
+    client.run(config.discord_token, log_handler=None)
     return 0
