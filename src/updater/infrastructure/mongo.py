@@ -200,6 +200,10 @@ class MongoTargetRepository:
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
 
+    def delete(self, name: str) -> bool:
+        result = self.collection.delete_one({"normalized_name": normalize_name(name)})
+        return result.deleted_count > 0
+
 
 class MongoTargetVersionRepository:
     def __init__(self, db: Any) -> None:
@@ -309,3 +313,6 @@ class MongoTargetVulnerabilityRepository:
 
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
+
+    def delete_by_target(self, target_id: str) -> int:
+        return self.collection.delete_many({"target_id": target_id}).deleted_count

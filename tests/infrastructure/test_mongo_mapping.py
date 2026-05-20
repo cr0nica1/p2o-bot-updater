@@ -214,3 +214,58 @@ def test_vulnerability_merge_keeps_existing_zdi_description_over_incoming_nvd_de
     merged = merge_vulnerability_documents(existing, incoming)
 
     assert merged["description"] == "ZDI vulnerability detail"
+
+
+def test_target_repository_delete_returns_true_when_match_found():
+    class FakeCollection:
+        def __init__(self):
+            self.last_filter = None
+
+        def delete_one(self, filter):
+            self.last_filter = filter
+            class Result:
+                deleted_count = 1
+            return Result()
+
+    collection = FakeCollection()
+    repo = MongoTargetRepository.__new__(MongoTargetRepository)
+    repo.collection = collection
+
+    deleted = repo.delete(" Adobe Reader ")
+
+    assert deleted is True
+    assert collection.last_filter == {"normalized_name": "adobe reader"}
+
+
+def test_target_repository_delete_returns_false_when_no_match():
+    class FakeCollection:
+        def delete_one(self, filter):
+            class Result:
+                deleted_count = 0
+            return Result()
+
+    repo = MongoTargetRepository.__new__(MongoTargetRepository)
+    repo.collection = FakeCollection()
+
+    assert repo.delete("Nothing") is False
+
+
+def test_target_vulnerability_repository_delete_by_target_returns_count():
+    class FakeCollection:
+        def __init__(self):
+            self.last_filter = None
+
+        def delete_many(self, filter):
+            self.last_filter = filter
+            class Result:
+                deleted_count = 3
+            return Result()
+
+    collection = FakeCollection()
+    repo = MongoTargetVulnerabilityRepository.__new__(MongoTargetVulnerabilityRepository)
+    repo.collection = collection
+
+    deleted = repo.delete_by_target("target-1")
+
+    assert deleted == 3
+    assert collection.last_filter == {"target_id": "target-1"}
