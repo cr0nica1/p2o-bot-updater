@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import csv
-import io
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 import discord
 
 from updater.application.export_json import ExportService
 from updater.application.import_targets import ImportTargetsService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
-from updater.domain.models import Target, TargetVersion, TargetVulnerability, Vulnerability
+from updater.domain.models import Target, TargetVulnerability, Vulnerability
 from updater.domain.repositories import (
     TargetRepository,
     TargetVersionRepository,
