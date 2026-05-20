@@ -5,16 +5,24 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pwn2own-updater"
 version = "0.1.0"
-description = "CLI prototype for tracking Pwn2Own target vulnerabilities"
+description = "Discord bot for tracking Pwn2Own target vulnerabilities"
 requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.12.0",
+    "discord.py>=2.3.0",
     "pymongo>=4.6.0",
+    "python-dotenv>=1.0.0",
     "requests>=2.31.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
 [project.scripts]
-updater = "updater.presentation.cli:main"
+updater-bot = "updater.presentation.discord_bot.bot:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -22,3 +30,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+asyncio_mode = "auto"
