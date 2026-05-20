@@ -271,3 +271,10 @@ async def test_show_schedule_displays_current_times():
     result = await handle_show_schedule(sync_time=(8, 0), notify_time=(9, 30))
     assert "08:00" in result.text
     assert "09:30" in result.text
+
+
+def test_bot_module_exposes_main_and_build_client():
+    from updater.presentation.discord_bot import bot
+
+    assert callable(bot.main)
+    assert callable(bot.build_client)
