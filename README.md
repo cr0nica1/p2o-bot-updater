@@ -80,12 +80,13 @@ The bot connects to Discord, registers slash commands, and starts the scheduler.
 | `/remove-target` | Admin | Remove a target |
 | `/show-target <name>` | Open | Show details for a named target |
 | `/list-targets` | Open | List all imported targets |
+| `/search-vulns [year] [from_date] [to_date]` | Open | Search stored vulnerabilities by advisory/published year and collection date range. If no dates are supplied, defaults to vulnerabilities stored today. Dates use `YYYY-MM-DD`. |
 | `/add-vuln` | Admin | Manually add a vulnerability |
 | `/sync-cves [target]` | Admin | Sync CVE/ZDI data and return an ephemeral result |
 | `/set-schedule <sync_time> <notify_time>` | Admin | Change the daily sync and notification times |
 | `/show-schedule` | Open | Show the current schedule |
 
-Read-only commands (`/show-target`, `/list-targets`, and `/show-schedule`) are open to all server members. All other commands require the admin role configured with `DISCORD_ADMIN_ROLE_ID`.
+Read-only commands (`/show-target`, `/list-targets`, `/search-vulns`, and `/show-schedule`) are open to all server members. All other commands require the admin role configured with `DISCORD_ADMIN_ROLE_ID`.
 
 ## Target CSV format
 
