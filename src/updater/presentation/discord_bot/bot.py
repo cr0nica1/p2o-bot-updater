@@ -35,8 +35,34 @@ from updater.presentation.discord_bot.scheduler import FireTracker
 log = logging.getLogger("updater.bot")
 
 
-def _chunk_embeds(embeds: list[object], *, size: int = 10) -> list[list[object]]:
-    return [embeds[index:index + size] for index in range(0, len(embeds), size)]
+_EMBEDS_PER_MESSAGE_LIMIT = 10
+_EMBED_TOTAL_PER_MESSAGE_LIMIT = 6000
+
+
+def _embed_size(embed: object) -> int:
+    title = getattr(embed, "title", None) or ""
+    description = getattr(embed, "description", None) or ""
+    fields = getattr(embed, "fields", [])
+    return len(title) + len(description) + sum(
+        len(getattr(field, "name", "")) + len(getattr(field, "value", "")) for field in fields
+    )
+
+
+def _chunk_embeds(embeds: list[object], *, size: int = _EMBEDS_PER_MESSAGE_LIMIT) -> list[list[object]]:
+    chunks: list[list[object]] = []
+    current: list[object] = []
+    current_size = 0
+    for embed in embeds:
+        embed_size = _embed_size(embed)
+        if current and (len(current) >= size or current_size + embed_size > _EMBED_TOTAL_PER_MESSAGE_LIMIT):
+            chunks.append(current)
+            current = []
+            current_size = 0
+        current.append(embed)
+        current_size += embed_size
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 async def _send_command_result(send, result: cmd.CommandResult) -> None:

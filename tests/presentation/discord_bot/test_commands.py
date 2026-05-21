@@ -647,3 +647,24 @@ async def test_send_command_result_sends_text_when_no_embeds():
     await _send_command_result(send, CommandResult(text="No findings"))
 
     assert calls == [{"content": "No findings"}]
+
+
+async def test_send_command_result_keeps_each_message_under_embed_total_limit():
+    import discord
+
+    from updater.presentation.discord_bot.bot import _send_command_result
+    from updater.presentation.discord_bot.commands import CommandResult
+
+    calls = []
+
+    async def send(**kwargs):
+        calls.append(kwargs)
+
+    embeds = [discord.Embed(title=f"Finding {index}", description="x" * 3500) for index in range(3)]
+    await _send_command_result(send, CommandResult(text="Search complete", embeds=embeds))
+
+    assert len(calls) == 3
+    assert all(len(call["embeds"]) == 1 for call in calls)
+    for call in calls:
+        total = sum(len(embed.title or "") + len(embed.description or "") for embed in call["embeds"])
+        assert total <= 6000
