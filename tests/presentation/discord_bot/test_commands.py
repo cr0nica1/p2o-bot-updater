@@ -502,3 +502,11 @@ def test_bot_module_exposes_main_and_build_client():
 
     assert callable(bot.main)
     assert callable(bot.build_client)
+
+
+def test_chunk_embeds_splits_in_batches_of_ten():
+    from updater.presentation.discord_bot.bot import _chunk_embeds
+
+    chunks = list(_chunk_embeds([object() for _ in range(23)], size=10))
+
+    assert [len(chunk) for chunk in chunks] == [10, 10, 3]

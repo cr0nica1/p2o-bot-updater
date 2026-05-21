@@ -35,6 +35,10 @@ from updater.presentation.discord_bot.scheduler import FireTracker
 log = logging.getLogger("updater.bot")
 
 
+def _chunk_embeds(embeds: list[object], *, size: int = 10) -> list[list[object]]:
+    return [embeds[index:index + size] for index in range(0, len(embeds), size)]
+
+
 def build_client(config: BotConfig) -> discord.Client:
     intents = discord.Intents.default()
     intents.members = True
@@ -155,6 +159,45 @@ def build_client(config: BotConfig) -> discord.Client:
         await interaction.followup.send(
             content=result.text or None, embeds=result.embeds, ephemeral=True
         )
+
+    @tree.command(name="search-vulns", description="Search stored vulnerabilities", guild=guild)
+    @app_commands.describe(
+        year="Optional year to match by advisory ID or published date",
+        from_date="Optional collected start date (YYYY-MM-DD); defaults to today",
+        to_date="Optional collected end date (YYYY-MM-DD); defaults to today",
+    )
+    async def search_vulns(
+        interaction: discord.Interaction,
+        year: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ):
+        await interaction.response.defer(thinking=True, ephemeral=False)
+        result = await cmd.handle_search_vulns(
+            services,
+            year=year,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        if result.ephemeral:
+            await interaction.followup.send(content=result.text, ephemeral=True)
+            return
+        if not result.embeds:
+            await interaction.followup.send(content=result.text)
+            return
+        chunks = _chunk_embeds(result.embeds, size=10)
+        await interaction.followup.send(
+            content=f"{result.text} — showing 1-{len(chunks[0])} of {len(result.embeds)}",
+            embeds=chunks[0],
+        )
+        shown = len(chunks[0])
+        for chunk in chunks[1:]:
+            start = shown + 1
+            shown += len(chunk)
+            await interaction.followup.send(
+                content=f"Showing {start}-{shown} of {len(result.embeds)}",
+                embeds=chunk,
+            )
 
     @tree.command(name="set-schedule", description="Set daily sync and notify times", guild=guild)
     @app_commands.describe(sync_time="HH:MM", notify_time="HH:MM")
