@@ -46,11 +46,14 @@ class Services:
 
 _CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
 _ZDI_YEAR_RE = re.compile(r"\bZDI-(?:CAN-)?(\d{2,4})-\d{3,7}\b", re.IGNORECASE)
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _parse_date_filter(value: str | None) -> date | None:
     if value is None:
         return None
+    if not _DATE_RE.match(value):
+        raise ValueError("dates must use YYYY-MM-DD format")
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
@@ -291,7 +294,7 @@ async def handle_search_vulns(
     if from_day > to_day:
         return CommandResult(text="from_date must be before or equal to to_date", ephemeral=True)
 
-    vulnerabilities = services.vulnerability_repo.list_all()
+    vulnerabilities = await asyncio.to_thread(services.vulnerability_repo.list_all)
     vulnerabilities_by_id: dict[str, Vulnerability] = {}
     for vulnerability in vulnerabilities:
         if vulnerability.id:
