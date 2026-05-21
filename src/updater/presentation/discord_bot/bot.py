@@ -91,6 +91,10 @@ def _local_to_utc(local_hour: int, local_minute: int, tz) -> tuple[int, int]:
     return utc_ref.hour, utc_ref.minute
 
 
+async def _resolve_channel(client, channel_id: int):
+    return client.get_channel(channel_id) or await client.fetch_channel(channel_id)
+
+
 def build_client(config: BotConfig) -> discord.Client:
     intents = discord.Intents.default()
     intents.members = True
@@ -310,15 +314,22 @@ def build_client(config: BotConfig) -> discord.Client:
                 sync_time=_local_to_utc(*current.sync_time, current.tz),
                 notify_time=_local_to_utc(*current.notify_time, current.tz),
             )
-            channel = client.get_channel(config.channel_id)
             for event in events:
                 if event == "sync":
                     await _run_sync(services)
                 elif event == "notify":
-                    if channel is None:
-                        log.warning("notify channel %s not found, skipping tick", config.channel_id)
-                    else:
-                        await _run_notify(services, channel, current.tz)
+                    try:
+                        channel = await _resolve_channel(client, config.channel_id)
+                    except discord.NotFound:
+                        log.warning("notify channel %s does not exist (404), skipping tick", config.channel_id)
+                        continue
+                    except discord.Forbidden:
+                        log.warning("notify channel %s access denied (403), bot lacks permissions, skipping tick", config.channel_id)
+                        continue
+                    except discord.HTTPException as exc:
+                        log.warning("notify channel %s fetch failed (status=%s text=%s), skipping tick", config.channel_id, exc.status, exc.text)
+                        continue
+                    await _run_notify(services, channel, current.tz)
         except Exception:
             log.exception("scheduler tick failed")
 

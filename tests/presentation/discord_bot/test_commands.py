@@ -615,6 +615,28 @@ def test_local_to_utc_converts_utc_plus_7_time():
     assert _local_to_utc(8, 30, timezone(timedelta(hours=7))) == (1, 30)
 
 
+async def test_resolve_channel_fetches_when_cache_misses():
+    from updater.presentation.discord_bot.bot import _resolve_channel
+
+    class FakeClient:
+        def __init__(self):
+            self.fetched_id = None
+
+        def get_channel(self, channel_id):
+            return None
+
+        async def fetch_channel(self, channel_id):
+            self.fetched_id = channel_id
+            return "channel"
+
+    client = FakeClient()
+
+    result = await _resolve_channel(client, 123)
+
+    assert result == "channel"
+    assert client.fetched_id == 123
+
+
 async def test_send_command_result_sends_embed_batches_without_interaction_followup():
     import discord
 
