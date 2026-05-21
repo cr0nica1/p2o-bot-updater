@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from updater.domain.models import Target, TargetVulnerability, Vulnerability
 from updater.presentation.discord_bot.commands import (
     CommandResult,
@@ -7,6 +9,7 @@ from updater.presentation.discord_bot.commands import (
     handle_import_targets,
     handle_list_targets,
     handle_remove_target,
+    handle_search_vulns,
     handle_set_schedule,
     handle_show_schedule,
     handle_show_target,
@@ -271,6 +274,227 @@ async def test_show_schedule_displays_current_times():
     result = await handle_show_schedule(sync_time=(8, 0), notify_time=(9, 30))
     assert "08:00" in result.text
     assert "09:30" in result.text
+
+
+async def test_search_vulns_year_matches_cve_id_year():
+    vuln_2024 = Vulnerability(
+        advisory_id="CVE-2024-12647",
+        severity="HIGH",
+        description="canon bug",
+        created_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+    vuln_2023 = Vulnerability(
+        advisory_id="CVE-2023-9999",
+        severity="LOW",
+        description="old bug",
+        created_at=datetime(2026, 5, 21, 11, 0, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([vuln_2024, vuln_2023]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="CVE-2024-12647"),
+            TargetVulnerability(target_id="t2", target_name="Other", vulnerability_id="CVE-2023-9999"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=2024,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert "Found 1 vulnerabilities" in result.text
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-12647"
+
+
+async def test_search_vulns_year_matches_zdi_short_year():
+    vuln = Vulnerability(
+        advisory_id="ZDI-24-280",
+        severity="MEDIUM",
+        description="zdi bug",
+        created_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([vuln]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="ZDI-24-280"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=2024,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "ZDI-24-280"
+
+
+async def test_search_vulns_year_matches_published_date_year():
+    vuln = Vulnerability(
+        advisory_id="VENDOR-ABC",
+        severity="HIGH",
+        description="vendor advisory",
+        published_date=datetime(2024, 9, 10, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([vuln]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Vendor", vulnerability_id="VENDOR-ABC"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=2024,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "VENDOR-ABC"
+
+
+async def test_search_vulns_filters_created_at_date_range():
+    in_range = Vulnerability(
+        advisory_id="CVE-2024-1111",
+        created_at=datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
+    )
+    out_of_range = Vulnerability(
+        advisory_id="CVE-2024-2222",
+        created_at=datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([in_range, out_of_range]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="In", vulnerability_id="CVE-2024-1111"),
+            TargetVulnerability(target_id="t2", target_name="Out", vulnerability_id="CVE-2024-2222"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=None,
+        from_date="2026-05-19",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-1111"
+
+
+async def test_search_vulns_defaults_to_today_when_no_dates_given():
+    today_vuln = Vulnerability(
+        advisory_id="CVE-2024-1111",
+        created_at=datetime(2026, 5, 21, 1, 0, tzinfo=timezone.utc),
+    )
+    yesterday_vuln = Vulnerability(
+        advisory_id="CVE-2024-2222",
+        created_at=datetime(2026, 5, 20, 23, 59, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([today_vuln, yesterday_vuln]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Today", vulnerability_id="CVE-2024-1111"),
+            TargetVulnerability(target_id="t2", target_name="Yesterday", vulnerability_id="CVE-2024-2222"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=None,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-1111"
+    assert "collected: 2026-05-21 to 2026-05-21" in result.text
+
+
+async def test_search_vulns_applies_year_and_date_with_and_logic():
+    matching = Vulnerability(
+        advisory_id="CVE-2024-1111",
+        created_at=datetime(2026, 5, 21, 1, 0, tzinfo=timezone.utc),
+    )
+    wrong_year = Vulnerability(
+        advisory_id="CVE-2023-2222",
+        created_at=datetime(2026, 5, 21, 1, 0, tzinfo=timezone.utc),
+    )
+    wrong_date = Vulnerability(
+        advisory_id="CVE-2024-3333",
+        created_at=datetime(2026, 5, 19, 1, 0, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([matching, wrong_year, wrong_date]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Match", vulnerability_id="CVE-2024-1111"),
+            TargetVulnerability(target_id="t2", target_name="WrongYear", vulnerability_id="CVE-2023-2222"),
+            TargetVulnerability(target_id="t3", target_name="WrongDate", vulnerability_id="CVE-2024-3333"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=2024,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-1111"
+
+
+async def test_search_vulns_returns_no_results_message():
+    services = _services(vuln_repo=FakeVulnRepo([]), link_repo=FakeLinkRepo([]))
+
+    result = await handle_search_vulns(
+        services,
+        year=2024,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert result.text == "No vulnerabilities found matching the filters."
+    assert result.embeds == []
+
+
+async def test_search_vulns_rejects_invalid_date():
+    result = await handle_search_vulns(
+        _services(),
+        year=None,
+        from_date="2026/05/21",
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert "YYYY-MM-DD" in result.text
+    assert result.ephemeral is True
+
+
+async def test_search_vulns_rejects_out_of_range_year():
+    result = await handle_search_vulns(
+        _services(),
+        year=1998,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert "year" in result.text.lower()
+    assert result.ephemeral is True
 
 
 def test_bot_module_exposes_main_and_build_client():

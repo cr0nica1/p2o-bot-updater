@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import discord
 
@@ -29,6 +32,7 @@ from updater.presentation.discord_bot.formatting import (
 class CommandResult:
     text: str = ""
     embeds: list[discord.Embed] = field(default_factory=list)
+    ephemeral: bool = False
 
 
 @dataclass
@@ -38,6 +42,61 @@ class Services:
     vulnerability_repo: VulnerabilityRepository
     target_vulnerability_repo: TargetVulnerabilityRepository
     sources: list[VulnerabilitySource]
+
+
+_CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
+_ZDI_YEAR_RE = re.compile(r"\bZDI-(?:CAN-)?(\d{2,4})-\d{3,7}\b", re.IGNORECASE)
+
+
+def _parse_date_filter(value: str | None) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("dates must use YYYY-MM-DD format") from exc
+
+
+def _validate_search_year(year: int | None, today: date) -> None:
+    if year is None:
+        return
+    if year < 1999 or year > today.year + 1:
+        raise ValueError(f"year must be between 1999 and {today.year + 1}")
+
+
+def _finding_years(finding: dict[str, Any], vulnerability: Vulnerability | None) -> set[int]:
+    values = [finding.get("advisory_id", ""), *finding.get("aliases", [])]
+    years = {int(match.group(1)) for value in values for match in _CVE_YEAR_RE.finditer(value)}
+    for value in values:
+        for match in _ZDI_YEAR_RE.finditer(value):
+            raw_year = int(match.group(1))
+            years.add(2000 + raw_year if raw_year < 100 else raw_year)
+    if vulnerability is not None and vulnerability.published_date is not None:
+        years.add(vulnerability.published_date.year)
+    return years
+
+
+def _created_date(vulnerability: Vulnerability | None) -> date | None:
+    if vulnerability is None:
+        return None
+    created_at = vulnerability.created_at
+    if created_at.tzinfo is None:
+        return created_at.date()
+    return created_at.astimezone(timezone.utc).date()
+
+
+def _format_search_summary(
+    *,
+    total: int,
+    year: int | None,
+    from_day: date,
+    to_day: date,
+) -> str:
+    filters: list[str] = []
+    if year is not None:
+        filters.append(f"year: {year}")
+    filters.append(f"collected: {from_day.isoformat()} to {to_day.isoformat()}")
+    return f"Found {total} vulnerabilities (" + ", ".join(filters) + ")"
 
 
 async def handle_list_targets(services: Services) -> CommandResult:
@@ -203,6 +262,71 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
     )
     embeds = [build_finding_embed(f) for f in findings]
     return CommandResult(text=summary, embeds=embeds)
+
+
+async def handle_search_vulns(
+    services: Services,
+    *,
+    year: int | None,
+    from_date: str | None,
+    to_date: str | None,
+    today: date | None = None,
+) -> CommandResult:
+    today = today or datetime.now(timezone.utc).date()
+    try:
+        _validate_search_year(year, today)
+        from_day = _parse_date_filter(from_date)
+        to_day = _parse_date_filter(to_date)
+    except ValueError as exc:
+        return CommandResult(text=str(exc), ephemeral=True)
+
+    if from_day is None and to_day is None:
+        from_day = today
+        to_day = today
+    elif from_day is None:
+        from_day = to_day
+    elif to_day is None:
+        to_day = from_day
+
+    if from_day > to_day:
+        return CommandResult(text="from_date must be before or equal to to_date", ephemeral=True)
+
+    vulnerabilities = services.vulnerability_repo.list_all()
+    vulnerabilities_by_id: dict[str, Vulnerability] = {}
+    for vulnerability in vulnerabilities:
+        if vulnerability.id:
+            vulnerabilities_by_id[vulnerability.id] = vulnerability
+        vulnerabilities_by_id[vulnerability.advisory_id] = vulnerability
+
+    snapshot = await asyncio.to_thread(
+        ExportService(
+            services.target_repo,
+            services.vulnerability_repo,
+            services.target_vulnerability_repo,
+        ).snapshot
+    )
+    findings = group_findings(snapshot)
+
+    filtered: list[dict[str, Any]] = []
+    for finding in findings:
+        vulnerability = vulnerabilities_by_id.get(finding.get("advisory_id", ""))
+        created_day = _created_date(vulnerability)
+        if created_day is None or created_day < from_day or created_day > to_day:
+            continue
+        if year is not None and year not in _finding_years(finding, vulnerability):
+            continue
+        filtered.append(finding)
+
+    if not filtered:
+        return CommandResult(text="No vulnerabilities found matching the filters.")
+
+    summary = _format_search_summary(
+        total=len(filtered), year=year, from_day=from_day, to_day=to_day
+    )
+    return CommandResult(
+        text=summary,
+        embeds=[build_finding_embed(finding) for finding in filtered],
+    )
 
 
 async def handle_set_schedule(
