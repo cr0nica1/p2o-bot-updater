@@ -119,31 +119,103 @@ async def test_list_targets_empty():
     assert "No targets" in result.text
 
 
-async def test_list_targets_returns_names():
+async def test_list_targets_returns_numbered_names_sorted_alphabetically():
     services = _services(target_repo=FakeTargetRepo([
-        Target(id="t1", name="Adobe Reader"),
         Target(id="t2", name="Canon MF654Cdw"),
+        Target(id="t1", name="Adobe Reader"),
     ]))
     result = await handle_list_targets(services)
-    assert "Adobe Reader" in result.text
-    assert "Canon MF654Cdw" in result.text
+    assert result.text == "Targets:\n1. Adobe Reader\n2. Canon MF654Cdw"
 
 
-async def test_show_target_includes_vulnerability_count():
-    target = Target(id="t1", name="Adobe Reader")
-    link = TargetVulnerability(target_id="t1", vulnerability_id="v1")
+async def test_show_target_resolves_numbered_target_id_from_sorted_list():
+    target = Target(id="t1", name="Adobe Reader", aliases=["Acrobat"], vendor="Adobe", category="pdf")
+    services = _services(target_repo=FakeTargetRepo([
+        Target(id="t2", name="Canon MF654Cdw"),
+        target,
+    ]))
+    result = await handle_show_target(services, target_id=1, limit=None)
+    assert result.text.splitlines()[:5] == [
+        "Target #1: Adobe Reader",
+        "Aliases: Acrobat",
+        "Vendor: Adobe",
+        "Category: pdf",
+        "No vulnerabilities found.",
+    ]
+    assert result.embeds == []
+
+
+async def test_show_target_rejects_out_of_range_target_id():
+    services = _services(target_repo=FakeTargetRepo([Target(id="t1", name="Adobe Reader")]))
+    result = await handle_show_target(services, target_id=2, limit=None)
+    assert result.text == "Invalid target ID. Use /list-targets to see available targets (1-1)."
+    assert result.ephemeral is True
+
+
+async def test_show_target_returns_vulnerability_embeds_sorted_by_recent_date():
+    old = Vulnerability(
+        id="v-old",
+        advisory_id="CVE-2024-0001",
+        severity="LOW",
+        description="old bug",
+        published_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    new = Vulnerability(
+        id="v-new",
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        description="new bug",
+        published_date=datetime(2024, 2, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+    )
+    target = Target(id="t1", name="Canon")
     services = _services(
         target_repo=FakeTargetRepo([target]),
-        link_repo=FakeLinkRepo([link]),
+        vuln_repo=FakeVulnRepo([old, new]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-old"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-new"),
+        ]),
     )
-    result = await handle_show_target(services, name="Adobe Reader")
-    assert "Adobe Reader" in result.text
-    assert "1" in result.text
+
+    result = await handle_show_target(services, target_id=1, limit=None)
+
+    assert "Showing 2 of 2 vulnerabilities" in result.text
+    assert [embed.title for embed in result.embeds] == ["CVE-2024-0002", "CVE-2024-0001"]
 
 
-async def test_show_target_not_found():
-    result = await handle_show_target(_services(), name="Nope")
-    assert "not found" in result.text.lower()
+async def test_show_target_limit_shows_only_most_recent_vulnerabilities():
+    target = Target(id="t1", name="Canon")
+    newest = Vulnerability(
+        id="v-newest",
+        advisory_id="CVE-2024-0003",
+        created_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
+    )
+    middle = Vulnerability(
+        id="v-middle",
+        advisory_id="CVE-2024-0002",
+        created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+    )
+    oldest = Vulnerability(
+        id="v-oldest",
+        advisory_id="CVE-2024-0001",
+        created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vuln_repo=FakeVulnRepo([oldest, newest, middle]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-oldest"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-newest"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-middle"),
+        ]),
+    )
+
+    result = await handle_show_target(services, target_id=1, limit=2)
+
+    assert "Showing 2 of 3 vulnerabilities" in result.text
+    assert [embed.title for embed in result.embeds] == ["CVE-2024-0003", "CVE-2024-0002"]
 
 
 async def test_add_target_creates_target():
@@ -597,6 +669,46 @@ def test_bot_module_exposes_main_and_build_client():
 
     assert callable(bot.main)
     assert callable(bot.build_client)
+
+
+def test_show_target_command_uses_target_id_and_limit_options(tmp_path):
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from discord import app_commands
+    from updater.presentation.discord_bot.bot import build_client
+    from updater.presentation.discord_bot.config import BotConfig, UTC_PLUS_7
+
+    config = BotConfig(
+        env_path=Path(tmp_path / ".env"),
+        discord_token="token",
+        guild_id=1,
+        channel_id=2,
+        admin_role_id=3,
+        sync_time=(8, 0),
+        notify_time=(9, 0),
+        mongodb_uri="mongodb://localhost:27017",
+        mongodb_database="test",
+        tz=UTC_PLUS_7,
+    )
+    original_tree = app_commands.CommandTree
+    captured = {}
+
+    def capture_tree(client):
+        tree = original_tree(client)
+        captured["tree"] = tree
+        return tree
+
+    with (
+        patch("updater.presentation.discord_bot.bot.app_commands.CommandTree", side_effect=capture_tree),
+        patch("updater.presentation.discord_bot.bot._build_services", return_value=_services()),
+    ):
+        build_client(config)
+
+    guild_commands = captured["tree"]._guild_commands[1]
+    show_target = guild_commands["show-target"]
+
+    assert [parameter.name for parameter in show_target.parameters] == ["target_id", "limit"]
 
 
 def test_chunk_embeds_splits_in_batches_of_ten():

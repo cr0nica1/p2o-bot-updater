@@ -50,6 +50,39 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 UTC_PLUS_7 = timezone(timedelta(hours=7))
 
 
+def _sorted_targets(services: Services) -> list[Target]:
+    return sorted(services.target_repo.list_all(), key=lambda target: target.name.casefold())
+
+
+def _target_storage_id(target: Target) -> str:
+    return target.id or target.normalized_name
+
+
+def _vulnerability_lookup(vulnerabilities: list[Vulnerability]) -> dict[str, Vulnerability]:
+    lookup: dict[str, Vulnerability] = {}
+    for vulnerability in vulnerabilities:
+        if vulnerability.id:
+            lookup[vulnerability.id] = vulnerability
+        lookup[vulnerability.advisory_id] = vulnerability
+    return lookup
+
+
+def _vulnerability_sort_time(vulnerability: Vulnerability) -> datetime:
+    return vulnerability.published_date or vulnerability.created_at
+
+
+def _finding_for_target(vulnerability: Vulnerability, target: Target) -> dict[str, Any]:
+    return {
+        "advisory_id": vulnerability.advisory_id,
+        "aliases": list(vulnerability.aliases),
+        "cvss_score": vulnerability.cvss_score,
+        "severity": vulnerability.severity,
+        "description": vulnerability.description or "",
+        "references": list(vulnerability.references),
+        "target_names": [target.name],
+    }
+
+
 def _parse_date_filter(value: str | None) -> date | None:
     if value is None:
         return None
@@ -104,31 +137,53 @@ def _format_search_summary(
 
 
 async def handle_list_targets(services: Services) -> CommandResult:
-    targets = services.target_repo.list_all()
+    targets = _sorted_targets(services)
     if not targets:
         return CommandResult(text="No targets configured.")
-    lines = [f"- {t.name}" for t in targets]
+    lines = [f"{index}. {target.name}" for index, target in enumerate(targets, start=1)]
     return CommandResult(text="Targets:\n" + "\n".join(lines))
 
 
-async def handle_show_target(services: Services, *, name: str) -> CommandResult:
-    target = services.target_repo.find_by_name(name)
-    if target is None:
-        return CommandResult(text=f"Target {name!r} not found.")
-    target_id = target.id or target.normalized_name
-    linked = sum(
-        1
+async def handle_show_target(services: Services, *, target_id: int, limit: int | None) -> CommandResult:
+    targets = _sorted_targets(services)
+    if target_id < 1 or target_id > len(targets):
+        return CommandResult(
+            text=f"Invalid target ID. Use /list-targets to see available targets (1-{len(targets)}).",
+            ephemeral=True,
+        )
+
+    target = targets[target_id - 1]
+    storage_id = _target_storage_id(target)
+    links = [
+        link
         for link in services.target_vulnerability_repo.list_all()
-        if link.target_id == target_id
-    )
+        if link.target_id == storage_id
+    ]
+    vulnerabilities_by_id = _vulnerability_lookup(services.vulnerability_repo.list_all())
+    vulnerabilities = [
+        vulnerabilities_by_id[link.vulnerability_id]
+        for link in links
+        if link.vulnerability_id in vulnerabilities_by_id
+    ]
+    vulnerabilities.sort(key=_vulnerability_sort_time, reverse=True)
+
+    total = len(vulnerabilities)
+    if limit is not None and limit > 0:
+        vulnerabilities = vulnerabilities[:limit]
+
     lines = [
-        f"Name: {target.name}",
+        f"Target #{target_id}: {target.name}",
         f"Aliases: {', '.join(target.aliases) or '—'}",
         f"Vendor: {target.vendor or '—'}",
         f"Category: {target.category or '—'}",
-        f"Vulnerabilities: {linked}",
     ]
-    return CommandResult(text="\n".join(lines))
+    if total == 0:
+        lines.append("No vulnerabilities found.")
+    else:
+        lines.append(f"Showing {len(vulnerabilities)} of {total} vulnerabilities")
+
+    embeds = [build_finding_embed(_finding_for_target(vulnerability, target)) for vulnerability in vulnerabilities]
+    return CommandResult(text="\n".join(lines), embeds=embeds)
 
 
 async def handle_add_target(

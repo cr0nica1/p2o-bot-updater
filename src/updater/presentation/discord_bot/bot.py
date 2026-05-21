@@ -122,9 +122,16 @@ def build_client(config: BotConfig) -> discord.Client:
         await _reply(interaction, await cmd.handle_list_targets(services))
 
     @tree.command(name="show-target", description="Show target details", guild=guild)
-    @app_commands.describe(name="Target name")
-    async def show_target(interaction: discord.Interaction, name: str):
-        await _reply(interaction, await cmd.handle_show_target(services, name=name))
+    @app_commands.describe(
+        target_id="Target number from /list-targets",
+        limit="Optional number of recent vulnerabilities to show",
+    )
+    async def show_target(
+        interaction: discord.Interaction,
+        target_id: int,
+        limit: int | None = None,
+    ):
+        await _reply(interaction, await cmd.handle_show_target(services, target_id=target_id, limit=limit))
 
     @tree.command(name="add-target", description="Add a target", guild=guild)
     @app_commands.describe(
