@@ -1,6 +1,11 @@
 .worktrees/
+.claude/
+.vscode/
 .venv/
+.env
 __pycache__/
 .pytest_cache/
 *.pyc
+*.egg-info/
 output.json
+ouput.json
