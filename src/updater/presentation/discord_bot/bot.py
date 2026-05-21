@@ -172,7 +172,6 @@ def build_client(config: BotConfig) -> discord.Client:
         from_date: str | None = None,
         to_date: str | None = None,
     ):
-        await interaction.response.defer(thinking=True, ephemeral=False)
         result = await cmd.handle_search_vulns(
             services,
             year=year,
@@ -180,8 +179,9 @@ def build_client(config: BotConfig) -> discord.Client:
             to_date=to_date,
         )
         if result.ephemeral:
-            await interaction.followup.send(content=result.text, ephemeral=True)
+            await interaction.response.send_message(content=result.text, ephemeral=True)
             return
+        await interaction.response.defer(thinking=True, ephemeral=False)
         if not result.embeds:
             await interaction.followup.send(content=result.text)
             return
