@@ -365,6 +365,26 @@ class _FakeSource:
         return []
 
 
+class _StaticSource:
+    source_name = "fake"
+
+    def __init__(self, findings):
+        self.findings = findings
+
+    def search(self, target, query, since_year=None):
+        if query != "Canon":
+            return []
+        return [(vulnerability, {"matched": query}) for vulnerability in self.findings]
+
+
+class _PreservingVulnRepo(FakeVulnRepo):
+    def upsert(self, vuln):
+        existing = self.items.get(vuln.advisory_id)
+        if existing is not None:
+            vuln.created_at = existing.created_at
+        return super().upsert(vuln)
+
+
 async def test_sync_cves_returns_embeds_for_findings():
     target = Target(id="t1", name="Canon")
     services = _services(
@@ -382,6 +402,40 @@ async def test_sync_cves_unknown_target_returns_not_found():
     result = await handle_sync_cves(services, target_name="Unknown")
     assert "not found" in result.text.lower()
     assert result.embeds == []
+
+
+async def test_sync_cves_only_reports_vulnerabilities_stored_since_sync_minute():
+    from unittest.mock import patch
+
+    existing = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="LOW",
+        description="old bug already in db",
+        created_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    fresh = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        description="new bug from this sync",
+        created_at=datetime(2026, 5, 21, 13, 34, 30, tzinfo=timezone.utc),
+    )
+    target = Target(id="t1", name="Canon")
+    source = _StaticSource([existing, fresh])
+
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vuln_repo=_PreservingVulnRepo([existing]),
+        sources=[source],
+    )
+
+    sync_start = datetime(2026, 5, 21, 13, 34, 0, tzinfo=timezone.utc)
+    with patch("updater.presentation.discord_bot.commands.datetime") as mock_dt:
+        mock_dt.now.return_value = sync_start
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = await handle_sync_cves(services, target_name="Canon")
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-0002"
 
 
 async def test_set_schedule_writes_env(tmp_path):

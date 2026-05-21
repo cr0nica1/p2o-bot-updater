@@ -312,6 +312,7 @@ async def handle_add_vuln(
 async def handle_sync_cves(services: Services, *, target_name: str | None) -> CommandResult:
     if target_name is not None and services.target_repo.find_by_name(target_name) is None:
         return CommandResult(text=f"Target {target_name!r} not found.")
+    sync_started_at = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     sync = SyncVulnerabilitiesService(
         services.target_repo,
         services.vulnerability_repo,
@@ -320,6 +321,7 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
     )
     result = await asyncio.to_thread(sync.sync_one, target_name) if target_name else await asyncio.to_thread(sync.sync_all)
 
+    vulnerabilities_by_id = _vulnerability_lookup(await asyncio.to_thread(services.vulnerability_repo.list_all))
     snapshot = await asyncio.to_thread(
         ExportService(
             services.target_repo,
@@ -333,6 +335,12 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
         findings = [
             f for f in findings if target_name.strip().lower() in [t.lower() for t in f["target_names"]]
         ]
+    findings = [
+        finding
+        for finding in findings
+        if (vulnerability := vulnerabilities_by_id.get(finding.get("advisory_id", ""))) is not None
+        and vulnerability.created_at >= sync_started_at
+    ]
 
     summary = (
         f"Sync complete. targets_processed={result.targets_processed} "
