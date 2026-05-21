@@ -15,6 +15,27 @@ SEVERITY_COLORS: dict[str, int] = {
     "NONE": 0x999999,
 }
 
+_EMBED_TOTAL_LIMIT = 6000
+_DESCRIPTION_LIMIT = 3500
+_FIELD_VALUE_LIMIT = 1024
+_TRUNCATION_SUFFIX = "…"
+
+
+def _truncate(value: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    if len(value) <= limit:
+        return value
+    if limit <= len(_TRUNCATION_SUFFIX):
+        return _TRUNCATION_SUFFIX[:limit]
+    return value[: limit - len(_TRUNCATION_SUFFIX)] + _TRUNCATION_SUFFIX
+
+
+def _embed_size(embed: discord.Embed) -> int:
+    total = len(embed.title or "") + len(embed.description or "")
+    total += sum(len(field.name) + len(field.value) for field in embed.fields)
+    return total
+
 
 def _pick_title(advisory_id: str, aliases: Iterable[str]) -> str:
     if advisory_id.upper().startswith("CVE-"):
@@ -35,7 +56,7 @@ def build_finding_embed(finding: dict[str, Any]) -> discord.Embed:
     advisory_id = finding["advisory_id"]
     aliases = finding.get("aliases") or []
     title = _pick_title(advisory_id, aliases)
-    description = finding.get("description") or ""
+    description = _truncate(finding.get("description") or "", _DESCRIPTION_LIMIT)
     severity = finding.get("severity") or "None"
 
     embed = discord.Embed(
@@ -45,7 +66,11 @@ def build_finding_embed(finding: dict[str, Any]) -> discord.Embed:
     )
 
     target_names = finding.get("target_names") or []
-    embed.add_field(name="Target", value=", ".join(target_names) or "—", inline=False)
+    embed.add_field(
+        name="Target",
+        value=_truncate(", ".join(target_names) or "—", _FIELD_VALUE_LIMIT),
+        inline=False,
+    )
     embed.add_field(name="Severity", value=severity, inline=True)
 
     cvss = finding.get("cvss_score")
@@ -55,9 +80,13 @@ def build_finding_embed(finding: dict[str, Any]) -> discord.Embed:
     if references:
         embed.add_field(
             name="References",
-            value="\n".join(f"- {ref}" for ref in references),
+            value=_truncate("\n".join(f"- {ref}" for ref in references), _FIELD_VALUE_LIMIT),
             inline=False,
         )
+
+    while _embed_size(embed) > _EMBED_TOTAL_LIMIT and embed.description:
+        overflow = _embed_size(embed) - _EMBED_TOTAL_LIMIT
+        embed.description = _truncate(embed.description, max(0, len(embed.description) - overflow))
 
     return embed
 

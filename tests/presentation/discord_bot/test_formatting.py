@@ -86,6 +86,22 @@ def test_embed_lists_references_as_bullets():
     assert "- https://b" in fields["References"]
 
 
+def test_embed_stays_under_discord_size_limits():
+    finding = _finding(
+        description="D" * 10000,
+        references=[f"https://example.com/{index}/" + "x" * 200 for index in range(100)],
+        target_names=tuple(f"Target {index}" for index in range(200)),
+    )
+
+    embed = build_finding_embed(finding)
+    total_size = len(embed.title or "") + len(embed.description or "")
+    total_size += sum(len(field.name) + len(field.value) for field in embed.fields)
+
+    assert len(embed.description) <= 4096
+    assert all(len(field.value) <= 1024 for field in embed.fields)
+    assert total_size <= 6000
+
+
 def test_summary_message_format():
     msg = build_summary_message(
         report_date=date(2026, 5, 20),
