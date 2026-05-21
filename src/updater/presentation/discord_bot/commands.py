@@ -169,6 +169,26 @@ async def handle_remove_target(services: Services, *, names: list[str]) -> Comma
     return CommandResult(text="\n".join(parts) or "Nothing to do.")
 
 
+async def handle_clear_database(services: Services, *, confirm: str) -> CommandResult:
+    if confirm != "DELETE":
+        return CommandResult(text="Refusing to clear database: type DELETE to confirm.", ephemeral=True)
+
+    counts = {
+        "targets": services.target_repo.delete_all(),
+        "versions": services.version_repo.delete_all(),
+        "vulnerabilities": services.vulnerability_repo.delete_all(),
+        "links": services.target_vulnerability_repo.delete_all(),
+    }
+    return CommandResult(
+        text=(
+            "Database cleared.\n"
+            f"targets={counts['targets']} versions={counts['versions']} "
+            f"vulnerabilities={counts['vulnerabilities']} links={counts['links']}"
+        ),
+        ephemeral=True,
+    )
+
+
 async def handle_import_targets(services: Services, *, csv_bytes: bytes) -> CommandResult:
     import tempfile
 

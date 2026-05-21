@@ -6,6 +6,7 @@ from updater.presentation.discord_bot.commands import (
     Services,
     handle_add_target,
     handle_add_vuln,
+    handle_clear_database,
     handle_import_targets,
     handle_list_targets,
     handle_remove_target,
@@ -41,6 +42,11 @@ class FakeTargetRepo:
                 return True
         return False
 
+    def delete_all(self):
+        deleted = len(self._targets)
+        self._targets.clear()
+        return deleted
+
 
 class FakeVersionRepo:
     def __init__(self):
@@ -49,6 +55,11 @@ class FakeVersionRepo:
     def upsert(self, version):
         self.calls.append(version)
         return version
+
+    def delete_all(self):
+        deleted = len(self.calls)
+        self.calls.clear()
+        return deleted
 
 
 class FakeVulnRepo:
@@ -62,6 +73,11 @@ class FakeVulnRepo:
 
     def list_all(self):
         return list(self.items.values())
+
+    def delete_all(self):
+        deleted = len(self.items)
+        self.items.clear()
+        return deleted
 
 
 class FakeLinkRepo:
@@ -80,6 +96,11 @@ class FakeLinkRepo:
         before = len(self.links)
         self.links = [link for link in self.links if link.target_id != target_id]
         return before - len(self.links)
+
+    def delete_all(self):
+        deleted = len(self.links)
+        self.links.clear()
+        return deleted
 
 
 def _services(target_repo=None, vuln_repo=None, link_repo=None, version_repo=None, sources=None):
@@ -159,6 +180,51 @@ async def test_remove_target_reports_missing():
     services = _services()
     result = await handle_remove_target(services, names=["Adobe Reader"])
     assert "not found" in result.text.lower()
+
+
+async def test_clear_database_rejects_missing_confirmation():
+    services = _services(
+        target_repo=FakeTargetRepo([Target(id="t1", name="Canon")]),
+        vuln_repo=FakeVulnRepo([Vulnerability(advisory_id="CVE-2024-1")]),
+        link_repo=FakeLinkRepo([TargetVulnerability(target_id="t1", vulnerability_id="CVE-2024-1")]),
+    )
+    services.version_repo.upsert(object())
+
+    result = await handle_clear_database(services, confirm="delete")
+
+    assert "type DELETE" in result.text
+    assert result.ephemeral is True
+    assert len(services.target_repo.list_all()) == 1
+    assert len(services.version_repo.calls) == 1
+    assert len(services.vulnerability_repo.list_all()) == 1
+    assert len(services.target_vulnerability_repo.list_all()) == 1
+
+
+async def test_clear_database_deletes_all_data_and_reports_counts():
+    services = _services(
+        target_repo=FakeTargetRepo([Target(id="t1", name="Canon"), Target(id="t2", name="Adobe")]),
+        vuln_repo=FakeVulnRepo([Vulnerability(advisory_id="CVE-2024-1")]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", vulnerability_id="CVE-2024-1"),
+            TargetVulnerability(target_id="t2", vulnerability_id="CVE-2024-1"),
+        ]),
+    )
+    services.version_repo.upsert(object())
+    services.version_repo.upsert(object())
+    services.version_repo.upsert(object())
+
+    result = await handle_clear_database(services, confirm="DELETE")
+
+    assert result.ephemeral is True
+    assert "Database cleared." in result.text
+    assert "targets=2" in result.text
+    assert "versions=3" in result.text
+    assert "vulnerabilities=1" in result.text
+    assert "links=2" in result.text
+    assert services.target_repo.list_all() == []
+    assert services.version_repo.calls == []
+    assert services.vulnerability_repo.list_all() == []
+    assert services.target_vulnerability_repo.list_all() == []
 
 
 async def test_import_targets_imports_csv_bytes():

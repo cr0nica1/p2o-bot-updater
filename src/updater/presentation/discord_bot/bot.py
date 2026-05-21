@@ -115,6 +115,13 @@ def build_client(config: BotConfig) -> discord.Client:
         result = await cmd.handle_import_targets(services, csv_bytes=data)
         await interaction.followup.send(content=result.text, ephemeral=True)
 
+    @tree.command(name="clear-database", description="Clear all stored targets and vulnerabilities", guild=guild)
+    @app_commands.describe(confirm="Type DELETE to confirm clearing the database")
+    async def clear_database(interaction: discord.Interaction, confirm: str):
+        if not await _admin_only(interaction):
+            return
+        await _reply(interaction, await cmd.handle_clear_database(services, confirm=confirm), ephemeral=True)
+
     @tree.command(name="add-vuln", description="Manually add a vulnerability", guild=guild)
     @app_commands.describe(
         advisory_id="Advisory ID (e.g. CVE-2024-12647)",

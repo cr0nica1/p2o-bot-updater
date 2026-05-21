@@ -78,6 +78,7 @@ The bot connects to Discord, registers slash commands, and starts the scheduler.
 | `/import-targets` | Admin | Import targets from a CSV attachment |
 | `/add-target` | Admin | Add a single target |
 | `/remove-target` | Admin | Remove a target |
+| `/clear-database confirm: DELETE` | Admin | Clear all targets, versions, vulnerabilities, and links |
 | `/show-target <name>` | Open | Show details for a named target |
 | `/list-targets` | Open | List all imported targets |
 | `/search-vulns [year] [from_date] [to_date]` | Open | Search stored vulnerabilities by advisory/published year and collection date range. If no dates are supplied, defaults to vulnerabilities stored today. Dates use `YYYY-MM-DD`. |
