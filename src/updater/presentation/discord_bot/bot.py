@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from datetime import datetime, timezone
@@ -229,12 +230,14 @@ def _build_services(config: BotConfig) -> cmd.Services:
 async def _run_sync(services: cmd.Services) -> None:
     log.info("scheduled sync starting")
     try:
-        result = SyncVulnerabilitiesService(
-            services.target_repo,
-            services.vulnerability_repo,
-            services.target_vulnerability_repo,
-            services.sources,
-        ).sync_all()
+        result = await asyncio.to_thread(
+            SyncVulnerabilitiesService(
+                services.target_repo,
+                services.vulnerability_repo,
+                services.target_vulnerability_repo,
+                services.sources,
+            ).sync_all
+        )
         log.info(
             "scheduled sync done targets=%d vulns=%d errors=%d",
             result.targets_processed,
@@ -248,11 +251,13 @@ async def _run_sync(services: cmd.Services) -> None:
 async def _run_notify(services: cmd.Services, channel) -> None:
     log.info("scheduled notify starting")
     try:
-        snapshot = ExportService(
-            services.target_repo,
-            services.vulnerability_repo,
-            services.target_vulnerability_repo,
-        ).snapshot()
+        snapshot = await asyncio.to_thread(
+            ExportService(
+                services.target_repo,
+                services.vulnerability_repo,
+                services.target_vulnerability_repo,
+            ).snapshot
+        )
     except Exception:
         log.exception("scheduled notify failed (snapshot)")
         return

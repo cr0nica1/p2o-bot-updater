@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -179,13 +180,15 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
         services.target_vulnerability_repo,
         services.sources,
     )
-    result = sync.sync_one(target_name) if target_name else sync.sync_all()
+    result = await asyncio.to_thread(sync.sync_one, target_name) if target_name else await asyncio.to_thread(sync.sync_all)
 
-    snapshot = ExportService(
-        services.target_repo,
-        services.vulnerability_repo,
-        services.target_vulnerability_repo,
-    ).snapshot()
+    snapshot = await asyncio.to_thread(
+        ExportService(
+            services.target_repo,
+            services.vulnerability_repo,
+            services.target_vulnerability_repo,
+        ).snapshot
+    )
     findings = group_findings(snapshot)
 
     if target_name:
