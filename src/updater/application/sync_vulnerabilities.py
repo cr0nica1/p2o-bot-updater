@@ -30,15 +30,15 @@ class SyncVulnerabilitiesService:
         self._progress = progress or (lambda _: None)
 
     def sync_all(self) -> SyncResult:
-        return self._sync_targets(self.target_repo.list_all())
+        return self._sync_targets(self.target_repo.list_all(), use_since_years=True)
 
     def sync_one(self, target_name: str) -> SyncResult:
         target = self.target_repo.find_by_name(target_name)
         if target is None:
             return SyncResult()
-        return self._sync_targets([target])
+        return self._sync_targets([target], use_since_years=False)
 
-    def _sync_targets(self, targets: list[Target]) -> SyncResult:
+    def _sync_targets(self, targets: list[Target], *, use_since_years: bool) -> SyncResult:
         result = SyncResult()
         total_targets = len(targets)
         self._progress(f"sync:start total_targets={total_targets}")
@@ -47,7 +47,7 @@ class SyncVulnerabilitiesService:
             before_links = result.links_updated
             before_errors = len(result.errors)
             self._progress(f"sync:target target={target.name} ({index}/{total_targets})")
-            self._sync_target(target, result)
+            self._sync_target(target, result, use_since_years=use_since_years)
             result.targets_processed += 1
             self._progress(
                 f"sync:target_done target={target.name} vulnerabilities={result.vulnerabilities_seen - before_vulnerabilities} links={result.links_updated - before_links} errors={len(result.errors) - before_errors}"
@@ -57,8 +57,8 @@ class SyncVulnerabilitiesService:
         )
         return result
 
-    def _sync_target(self, target: Target, result: SyncResult) -> None:
-        since_years = self._compute_since_years(target)
+    def _sync_target(self, target: Target, result: SyncResult, *, use_since_years: bool) -> None:
+        since_years = self._compute_since_years(target) if use_since_years else {}
         for query in target.search_queries():
             for source in self.sources:
                 try:

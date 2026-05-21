@@ -175,3 +175,58 @@ def test_sync_passes_no_since_year_without_stored_history():
 
     assert nvd_source.calls[0]["since_year"] is None
     assert zdi_source.calls[0]["since_year"] is None
+
+
+def test_sync_ignores_other_targets_history_when_computing_since_year():
+    target_a = Target(id="target-a", name="Target A")
+    target_b = Target(id="target-b", name="Target B")
+    vulnerability = Vulnerability(
+        id="vuln-1",
+        advisory_id="CVE-2026-1234",
+        sources=["nvd"],
+    )
+    link = TargetVulnerability(
+        target_id="target-a",
+        target_name="Target A",
+        vulnerability_id="vuln-1",
+    )
+    nvd_source = FakeSource("nvd")
+
+    service = SyncVulnerabilitiesService(
+        target_repo=FakeTargetRepository([target_a, target_b]),
+        vulnerability_repo=FakeVulnerabilityRepository([vulnerability]),
+        target_vulnerability_repo=FakeTargetVulnerabilityRepository([link]),
+        sources=[nvd_source],
+    )
+
+    service.sync_one("Target B")
+
+    assert nvd_source.calls[0]["target"] == target_b
+    assert nvd_source.calls[0]["since_year"] is None
+
+
+def test_sync_one_searches_full_history_even_with_existing_target_history():
+    target = Target(id="target-1", name="Target B")
+    vulnerability = Vulnerability(
+        id="vuln-1",
+        advisory_id="CVE-2026-1234",
+        sources=["nvd"],
+    )
+    link = TargetVulnerability(
+        target_id="target-1",
+        target_name="Target B",
+        vulnerability_id="vuln-1",
+    )
+    nvd_source = FakeSource("nvd")
+
+    service = SyncVulnerabilitiesService(
+        target_repo=FakeTargetRepository([target]),
+        vulnerability_repo=FakeVulnerabilityRepository([vulnerability]),
+        target_vulnerability_repo=FakeTargetVulnerabilityRepository([link]),
+        sources=[nvd_source],
+    )
+
+    service.sync_one("Target B")
+
+    assert nvd_source.calls[0]["target"] == target
+    assert nvd_source.calls[0]["since_year"] is None
