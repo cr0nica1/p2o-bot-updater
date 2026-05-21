@@ -613,3 +613,37 @@ def test_local_to_utc_converts_utc_plus_7_time():
     from updater.presentation.discord_bot.bot import _local_to_utc
 
     assert _local_to_utc(8, 30, timezone(timedelta(hours=7))) == (1, 30)
+
+
+async def test_send_command_result_sends_embed_batches_without_interaction_followup():
+    import discord
+
+    from updater.presentation.discord_bot.bot import _send_command_result
+    from updater.presentation.discord_bot.commands import CommandResult
+
+    calls = []
+
+    async def send(**kwargs):
+        calls.append(kwargs)
+
+    embeds = [discord.Embed(title=f"Finding {index}") for index in range(11)]
+    await _send_command_result(send, CommandResult(text="Sync complete", embeds=embeds))
+
+    assert calls[0]["content"] == "Sync complete — showing 1-10 of 11"
+    assert len(calls[0]["embeds"]) == 10
+    assert calls[1]["content"] == "Showing 11-11 of 11"
+    assert len(calls[1]["embeds"]) == 1
+
+
+async def test_send_command_result_sends_text_when_no_embeds():
+    from updater.presentation.discord_bot.bot import _send_command_result
+    from updater.presentation.discord_bot.commands import CommandResult
+
+    calls = []
+
+    async def send(**kwargs):
+        calls.append(kwargs)
+
+    await _send_command_result(send, CommandResult(text="No findings"))
+
+    assert calls == [{"content": "No findings"}]

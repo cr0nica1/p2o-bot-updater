@@ -39,6 +39,25 @@ def _chunk_embeds(embeds: list[object], *, size: int = 10) -> list[list[object]]
     return [embeds[index:index + size] for index in range(0, len(embeds), size)]
 
 
+async def _send_command_result(send, result: cmd.CommandResult) -> None:
+    if not result.embeds:
+        await send(content=result.text)
+        return
+    chunks = _chunk_embeds(result.embeds, size=10)
+    await send(
+        content=f"{result.text} — showing 1-{len(chunks[0])} of {len(result.embeds)}",
+        embeds=chunks[0],
+    )
+    shown = len(chunks[0])
+    for chunk in chunks[1:]:
+        start = shown + 1
+        shown += len(chunk)
+        await send(
+            content=f"Showing {start}-{shown} of {len(result.embeds)}",
+            embeds=chunk,
+        )
+
+
 def _local_to_utc(local_hour: int, local_minute: int, tz) -> tuple[int, int]:
     from datetime import datetime as _dt
     ref = _dt(2000, 1, 2, local_hour, local_minute, tzinfo=tz)
@@ -168,11 +187,24 @@ def build_client(config: BotConfig) -> discord.Client:
     async def sync_cves(interaction: discord.Interaction, target: str | None = None):
         if not await _admin_only(interaction):
             return
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        result = await cmd.handle_sync_cves(services, target_name=target)
-        await interaction.followup.send(
-            content=result.text or None, embeds=result.embeds, ephemeral=True
+        channel = interaction.channel
+        if channel is None:
+            await interaction.response.send_message("Cannot run sync outside a channel.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Sync started. Results will be posted in this channel when complete.",
+            ephemeral=True,
         )
+
+        async def _run_manual_sync() -> None:
+            try:
+                result = await cmd.handle_sync_cves(services, target_name=target)
+                await _send_command_result(channel.send, result)
+            except Exception:
+                log.exception("manual sync failed")
+                await channel.send("Manual sync failed. Check bot logs for details.")
+
+        asyncio.create_task(_run_manual_sync())
 
     @tree.command(name="search-vulns", description="Search stored vulnerabilities", guild=guild)
     @app_commands.describe(
