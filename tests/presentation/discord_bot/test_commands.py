@@ -465,7 +465,7 @@ async def test_search_vulns_defaults_to_today_when_no_dates_given():
     )
     yesterday_vuln = Vulnerability(
         advisory_id="CVE-2024-2222",
-        created_at=datetime(2026, 5, 20, 23, 59, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 20, 16, 59, tzinfo=timezone.utc),
     )
     services = _services(
         vuln_repo=FakeVulnRepo([today_vuln, yesterday_vuln]),
@@ -486,6 +486,35 @@ async def test_search_vulns_defaults_to_today_when_no_dates_given():
     assert len(result.embeds) == 1
     assert result.embeds[0].title == "CVE-2024-1111"
     assert "collected: 2026-05-21 to 2026-05-21" in result.text
+
+
+async def test_search_vulns_defaults_to_today_uses_utc_plus_7_date():
+    local_today_vuln = Vulnerability(
+        advisory_id="CVE-2024-1111",
+        created_at=datetime(2026, 5, 20, 18, 0, tzinfo=timezone.utc),
+    )
+    local_yesterday_vuln = Vulnerability(
+        advisory_id="CVE-2024-2222",
+        created_at=datetime(2026, 5, 20, 16, 59, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([local_today_vuln, local_yesterday_vuln]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Today", vulnerability_id="CVE-2024-1111"),
+            TargetVulnerability(target_id="t2", target_name="Yesterday", vulnerability_id="CVE-2024-2222"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        year=None,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-1111"
 
 
 async def test_search_vulns_applies_year_and_date_with_and_logic():
@@ -576,3 +605,11 @@ def test_chunk_embeds_splits_in_batches_of_ten():
     chunks = list(_chunk_embeds([object() for _ in range(23)], size=10))
 
     assert [len(chunk) for chunk in chunks] == [10, 10, 3]
+
+
+def test_local_to_utc_converts_utc_plus_7_time():
+    from datetime import timedelta, timezone
+
+    from updater.presentation.discord_bot.bot import _local_to_utc
+
+    assert _local_to_utc(8, 30, timezone(timedelta(hours=7))) == (1, 30)

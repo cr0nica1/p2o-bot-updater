@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from updater.presentation.discord_bot.config import (
@@ -52,6 +54,39 @@ def test_load_config_reads_all_fields(tmp_path):
         mongodb_uri="mongodb://localhost:27017",
         mongodb_database="pwn2own_updater",
     )
+
+
+def test_load_config_defaults_to_utc_plus_7(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DISCORD_TOKEN=tok\n"
+        "DISCORD_GUILD_ID=111\n"
+        "DISCORD_CHANNEL_ID=222\n"
+        "DISCORD_ADMIN_ROLE_ID=333\n"
+        "SYNC_TIME=08:00\n"
+        "NOTIFY_TIME=09:30\n"
+    )
+
+    config = load_config(env_file)
+
+    assert config.tz.utcoffset(None) == timedelta(hours=7)
+
+
+def test_load_config_accepts_utc_plus_7_timezone(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DISCORD_TOKEN=tok\n"
+        "DISCORD_GUILD_ID=111\n"
+        "DISCORD_CHANNEL_ID=222\n"
+        "DISCORD_ADMIN_ROLE_ID=333\n"
+        "SYNC_TIME=08:00\n"
+        "NOTIFY_TIME=09:30\n"
+        "TIMEZONE=UTC+7\n"
+    )
+
+    config = load_config(env_file)
+
+    assert config.tz.utcoffset(None) == timedelta(hours=7)
 
 
 def test_load_config_missing_token_raises(tmp_path):

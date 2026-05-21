@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -8,6 +9,29 @@ from dotenv import dotenv_values
 
 class ConfigError(Exception):
     pass
+
+
+UTC_PLUS_7 = timezone(timedelta(hours=7))
+
+
+def _parse_tz(value: str | None) -> timezone:
+    mapping = {
+        "UTC+7": UTC_PLUS_7,
+        "UTC-7": timezone(timedelta(hours=-7)),
+    }
+    if value is None:
+        return UTC_PLUS_7
+    key = value.strip().upper()
+    if key in mapping:
+        return mapping[key]
+    import re
+    m = re.match(r"^UTC([+-])(\d{1,2})(?::?(\d{2}))?$", key)
+    if m:
+        sign = 1 if m.group(1) == "+" else -1
+        hours = int(m.group(2))
+        minutes = int(m.group(3) or 0)
+        return timezone(timedelta(hours=sign * hours, minutes=sign * minutes))
+    raise ConfigError(f"unsupported timezone format: {value!r}, use UTC+7 or UTC-5:30")
 
 
 @dataclass(frozen=True)
@@ -21,6 +45,7 @@ class BotConfig:
     notify_time: tuple[int, int]
     mongodb_uri: str
     mongodb_database: str
+    tz: timezone = UTC_PLUS_7
 
 
 _REQUIRED_STR = ("DISCORD_TOKEN",)
@@ -82,6 +107,7 @@ def load_config(env_path: Path) -> BotConfig:
         notify_time=time_fields["NOTIFY_TIME"],
         mongodb_uri=(values.get("MONGODB_URI") or "mongodb://localhost:27017").strip(),
         mongodb_database=(values.get("MONGODB_DATABASE") or "pwn2own_updater").strip(),
+        tz=_parse_tz(values.get("TIMEZONE")),
     )
 
 

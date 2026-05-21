@@ -39,6 +39,13 @@ def _chunk_embeds(embeds: list[object], *, size: int = 10) -> list[list[object]]
     return [embeds[index:index + size] for index in range(0, len(embeds), size)]
 
 
+def _local_to_utc(local_hour: int, local_minute: int, tz) -> tuple[int, int]:
+    from datetime import datetime as _dt
+    ref = _dt(2000, 1, 2, local_hour, local_minute, tzinfo=tz)
+    utc_ref = ref.astimezone(timezone.utc)
+    return utc_ref.hour, utc_ref.minute
+
+
 def build_client(config: BotConfig) -> discord.Client:
     intents = discord.Intents.default()
     intents.members = True
@@ -184,6 +191,7 @@ def build_client(config: BotConfig) -> discord.Client:
             year=year,
             from_date=from_date,
             to_date=to_date,
+            today=datetime.now(config.tz).date(),
         )
         if result.ephemeral:
             await interaction.response.send_message(content=result.text, ephemeral=True)
@@ -241,8 +249,8 @@ def build_client(config: BotConfig) -> discord.Client:
             current = _reload_or_keep(config)
             events = tracker.check(
                 now=datetime.now(timezone.utc),
-                sync_time=current.sync_time,
-                notify_time=current.notify_time,
+                sync_time=_local_to_utc(*current.sync_time, current.tz),
+                notify_time=_local_to_utc(*current.notify_time, current.tz),
             )
             channel = client.get_channel(config.channel_id)
             for event in events:
@@ -252,7 +260,7 @@ def build_client(config: BotConfig) -> discord.Client:
                     if channel is None:
                         log.warning("notify channel %s not found, skipping tick", config.channel_id)
                     else:
-                        await _run_notify(services, channel)
+                        await _run_notify(services, channel, current.tz)
         except Exception:
             log.exception("scheduler tick failed")
 
@@ -298,7 +306,7 @@ async def _run_sync(services: cmd.Services) -> None:
         log.exception("scheduled sync failed")
 
 
-async def _run_notify(services: cmd.Services, channel) -> None:
+async def _run_notify(services: cmd.Services, channel, tz) -> None:
     log.info("scheduled notify starting")
     try:
         snapshot = await asyncio.to_thread(
@@ -314,7 +322,7 @@ async def _run_notify(services: cmd.Services, channel) -> None:
 
     findings = group_findings(snapshot)
     summary = build_summary_message(
-        report_date=datetime.now(timezone.utc).date(),
+        report_date=datetime.now(tz).date(),
         targets_processed=len(services.target_repo.list_all()),
         new_findings=len(findings),
         errors=0,

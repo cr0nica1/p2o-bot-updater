@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,7 @@ class Services:
 _CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
 _ZDI_YEAR_RE = re.compile(r"\bZDI-(?:CAN-)?(\d{2,4})-\d{3,7}\b", re.IGNORECASE)
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+UTC_PLUS_7 = timezone(timedelta(hours=7))
 
 
 def _parse_date_filter(value: str | None) -> date | None:
@@ -79,13 +80,13 @@ def _finding_years(finding: dict[str, Any], vulnerability: Vulnerability | None)
     return years
 
 
-def _created_date(vulnerability: Vulnerability | None) -> date | None:
+def _created_date(vulnerability: Vulnerability | None, tz=UTC_PLUS_7) -> date | None:
     if vulnerability is None:
         return None
     created_at = vulnerability.created_at
     if created_at.tzinfo is None:
         return created_at.date()
-    return created_at.astimezone(timezone.utc).date()
+    return created_at.astimezone(tz).date()
 
 
 def _format_search_summary(
@@ -295,7 +296,7 @@ async def handle_search_vulns(
     to_date: str | None,
     today: date | None = None,
 ) -> CommandResult:
-    today = today or datetime.now(timezone.utc).date()
+    today = today or datetime.now(UTC_PLUS_7).date()
     try:
         _validate_search_year(year, today)
         from_day = _parse_date_filter(from_date)

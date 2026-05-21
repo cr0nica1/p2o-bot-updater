@@ -54,8 +54,9 @@ The bot requires `.env` to exist with valid values for:
 - `DISCORD_GUILD_ID` — server ID where the bot operates
 - `DISCORD_CHANNEL_ID` — channel ID for scheduled notifications
 - `DISCORD_ADMIN_ROLE_ID` — role ID that can run admin-only commands
-- `SYNC_TIME` — daily CVE sync time in `HH:MM`
-- `NOTIFY_TIME` — daily notification time in `HH:MM`
+- `SYNC_TIME` — daily CVE sync time in `HH:MM` using `TIMEZONE`
+- `NOTIFY_TIME` — daily notification time in `HH:MM` using `TIMEZONE`
+- `TIMEZONE` — timezone for scheduled times and "today" filters; defaults to `UTC+7`
 - `MONGODB_URI` — MongoDB connection string
 - `MONGODB_DATABASE` — MongoDB database name
 
