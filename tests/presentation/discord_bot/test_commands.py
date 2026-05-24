@@ -119,31 +119,103 @@ async def test_list_targets_empty():
     assert "No targets" in result.text
 
 
-async def test_list_targets_returns_names():
+async def test_list_targets_returns_numbered_names_sorted_alphabetically():
     services = _services(target_repo=FakeTargetRepo([
-        Target(id="t1", name="Adobe Reader"),
         Target(id="t2", name="Canon MF654Cdw"),
+        Target(id="t1", name="Adobe Reader"),
     ]))
     result = await handle_list_targets(services)
-    assert "Adobe Reader" in result.text
-    assert "Canon MF654Cdw" in result.text
+    assert result.text == "Targets:\n1. Adobe Reader\n2. Canon MF654Cdw"
 
 
-async def test_show_target_includes_vulnerability_count():
-    target = Target(id="t1", name="Adobe Reader")
-    link = TargetVulnerability(target_id="t1", vulnerability_id="v1")
+async def test_show_target_resolves_numbered_target_id_from_sorted_list():
+    target = Target(id="t1", name="Adobe Reader", aliases=["Acrobat"], vendor="Adobe", category="pdf")
+    services = _services(target_repo=FakeTargetRepo([
+        Target(id="t2", name="Canon MF654Cdw"),
+        target,
+    ]))
+    result = await handle_show_target(services, target_id=1, limit=None)
+    assert result.text.splitlines()[:5] == [
+        "Target #1: Adobe Reader",
+        "Aliases: Acrobat",
+        "Vendor: Adobe",
+        "Category: pdf",
+        "No vulnerabilities found.",
+    ]
+    assert result.embeds == []
+
+
+async def test_show_target_rejects_out_of_range_target_id():
+    services = _services(target_repo=FakeTargetRepo([Target(id="t1", name="Adobe Reader")]))
+    result = await handle_show_target(services, target_id=2, limit=None)
+    assert result.text == "Invalid target ID. Use /list-targets to see available targets (1-1)."
+    assert result.ephemeral is True
+
+
+async def test_show_target_returns_vulnerability_embeds_sorted_by_recent_date():
+    old = Vulnerability(
+        id="v-old",
+        advisory_id="CVE-2024-0001",
+        severity="LOW",
+        description="old bug",
+        published_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    new = Vulnerability(
+        id="v-new",
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        description="new bug",
+        published_date=datetime(2024, 2, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+    )
+    target = Target(id="t1", name="Canon")
     services = _services(
         target_repo=FakeTargetRepo([target]),
-        link_repo=FakeLinkRepo([link]),
+        vuln_repo=FakeVulnRepo([old, new]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-old"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-new"),
+        ]),
     )
-    result = await handle_show_target(services, name="Adobe Reader")
-    assert "Adobe Reader" in result.text
-    assert "1" in result.text
+
+    result = await handle_show_target(services, target_id=1, limit=None)
+
+    assert "Showing 2 of 2 vulnerabilities" in result.text
+    assert [embed.title for embed in result.embeds] == ["CVE-2024-0002", "CVE-2024-0001"]
 
 
-async def test_show_target_not_found():
-    result = await handle_show_target(_services(), name="Nope")
-    assert "not found" in result.text.lower()
+async def test_show_target_limit_shows_only_most_recent_vulnerabilities():
+    target = Target(id="t1", name="Canon")
+    newest = Vulnerability(
+        id="v-newest",
+        advisory_id="CVE-2024-0003",
+        created_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
+    )
+    middle = Vulnerability(
+        id="v-middle",
+        advisory_id="CVE-2024-0002",
+        created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+    )
+    oldest = Vulnerability(
+        id="v-oldest",
+        advisory_id="CVE-2024-0001",
+        created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+    )
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vuln_repo=FakeVulnRepo([oldest, newest, middle]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-oldest"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-newest"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="v-middle"),
+        ]),
+    )
+
+    result = await handle_show_target(services, target_id=1, limit=2)
+
+    assert "Showing 2 of 3 vulnerabilities" in result.text
+    assert [embed.title for embed in result.embeds] == ["CVE-2024-0003", "CVE-2024-0002"]
 
 
 async def test_add_target_creates_target():
@@ -293,6 +365,26 @@ class _FakeSource:
         return []
 
 
+class _StaticSource:
+    source_name = "fake"
+
+    def __init__(self, findings):
+        self.findings = findings
+
+    def search(self, target, query, since_year=None):
+        if query != "Canon":
+            return []
+        return [(vulnerability, {"matched": query}) for vulnerability in self.findings]
+
+
+class _PreservingVulnRepo(FakeVulnRepo):
+    def upsert(self, vuln):
+        existing = self.items.get(vuln.advisory_id)
+        if existing is not None:
+            vuln.created_at = existing.created_at
+        return super().upsert(vuln)
+
+
 async def test_sync_cves_returns_embeds_for_findings():
     target = Target(id="t1", name="Canon")
     services = _services(
@@ -310,6 +402,40 @@ async def test_sync_cves_unknown_target_returns_not_found():
     result = await handle_sync_cves(services, target_name="Unknown")
     assert "not found" in result.text.lower()
     assert result.embeds == []
+
+
+async def test_sync_cves_only_reports_vulnerabilities_stored_since_sync_minute():
+    from unittest.mock import patch
+
+    existing = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="LOW",
+        description="old bug already in db",
+        created_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    fresh = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        description="new bug from this sync",
+        created_at=datetime(2026, 5, 21, 13, 34, 30, tzinfo=timezone.utc),
+    )
+    target = Target(id="t1", name="Canon")
+    source = _StaticSource([existing, fresh])
+
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vuln_repo=_PreservingVulnRepo([existing]),
+        sources=[source],
+    )
+
+    sync_start = datetime(2026, 5, 21, 13, 34, 0, tzinfo=timezone.utc)
+    with patch("updater.presentation.discord_bot.commands.datetime") as mock_dt:
+        mock_dt.now.return_value = sync_start
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = await handle_sync_cves(services, target_name="Canon")
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-0002"
 
 
 async def test_set_schedule_writes_env(tmp_path):
@@ -365,6 +491,7 @@ async def test_search_vulns_year_matches_cve_id_year():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -392,6 +519,7 @@ async def test_search_vulns_year_matches_zdi_short_year():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -419,6 +547,7 @@ async def test_search_vulns_year_matches_published_date_year():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -448,6 +577,7 @@ async def test_search_vulns_filters_created_at_date_range():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=None,
         from_date="2026-05-19",
         to_date="2026-05-21",
@@ -477,6 +607,7 @@ async def test_search_vulns_defaults_to_today_when_no_dates_given():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=None,
         from_date=None,
         to_date=None,
@@ -507,6 +638,7 @@ async def test_search_vulns_defaults_to_today_uses_utc_plus_7_date():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=None,
         from_date=None,
         to_date=None,
@@ -541,6 +673,7 @@ async def test_search_vulns_applies_year_and_date_with_and_logic():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -556,6 +689,7 @@ async def test_search_vulns_returns_no_results_message():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -569,6 +703,7 @@ async def test_search_vulns_returns_no_results_message():
 async def test_search_vulns_rejects_invalid_date():
     result = await handle_search_vulns(
         _services(),
+        severity=None,
         year=None,
         from_date="2026/05/21",
         to_date=None,
@@ -582,6 +717,7 @@ async def test_search_vulns_rejects_invalid_date():
 async def test_search_vulns_rejects_out_of_range_year():
     result = await handle_search_vulns(
         _services(),
+        severity=None,
         year=1998,
         from_date=None,
         to_date=None,
@@ -592,11 +728,188 @@ async def test_search_vulns_rejects_out_of_range_year():
     assert result.ephemeral is True
 
 
+async def test_search_vulns_severity_only_searches_entire_database():
+    old_high = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="HIGH",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    new_low = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        severity="LOW",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    new_high = Vulnerability(
+        advisory_id="CVE-2024-0003",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([old_high, new_low, new_high]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="A", vulnerability_id="CVE-2024-0001"),
+            TargetVulnerability(target_id="t2", target_name="B", vulnerability_id="CVE-2024-0002"),
+            TargetVulnerability(target_id="t3", target_name="C", vulnerability_id="CVE-2024-0003"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        severity="HIGH",
+        year=None,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert "severity: HIGH" in result.text
+    assert "scope: all" in result.text
+    assert len(result.embeds) == 2
+
+
+async def test_search_vulns_severity_with_date_filter():
+    high_1 = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+    )
+    high_2 = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    low = Vulnerability(
+        advisory_id="CVE-2024-0003",
+        severity="LOW",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([high_1, high_2, low]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="A", vulnerability_id="CVE-2024-0001"),
+            TargetVulnerability(target_id="t2", target_name="B", vulnerability_id="CVE-2024-0002"),
+            TargetVulnerability(target_id="t3", target_name="C", vulnerability_id="CVE-2024-0003"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        severity="HIGH",
+        year=None,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-0002"
+    assert "severity: HIGH" in result.text
+    assert "collected: 2026-05-21 to 2026-05-21" in result.text
+
+
+async def test_search_vulns_severity_with_year_filter():
+    vuln_2024 = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="MEDIUM",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    old_vuln_2024 = Vulnerability(
+        advisory_id="CVE-2024-0004",
+        severity="MEDIUM",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    vuln_2023 = Vulnerability(
+        advisory_id="CVE-2023-0002",
+        severity="MEDIUM",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([vuln_2024, old_vuln_2024, vuln_2023]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="A", vulnerability_id="CVE-2024-0001"),
+            TargetVulnerability(target_id="t2", target_name="B", vulnerability_id="CVE-2024-0004"),
+            TargetVulnerability(target_id="t3", target_name="C", vulnerability_id="CVE-2023-0002"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        severity="MEDIUM",
+        year=2024,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 2
+    assert {embed.title for embed in result.embeds} == {"CVE-2024-0001", "CVE-2024-0004"}
+    assert "severity: MEDIUM" in result.text
+    assert "year: 2024" in result.text
+    assert "collected:" not in result.text
+
+
+async def test_search_vulns_rejects_invalid_severity():
+    services = _services()
+
+    result = await handle_search_vulns(
+        services,
+        severity="URGENT",
+        year=None,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert result.ephemeral is True
+    assert "CRITICAL" in result.text
+    assert "HIGH" in result.text
+
+
 def test_bot_module_exposes_main_and_build_client():
     from updater.presentation.discord_bot import bot
 
     assert callable(bot.main)
     assert callable(bot.build_client)
+
+
+def test_show_target_command_uses_target_id_and_limit_options(tmp_path):
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from discord import app_commands
+    from updater.presentation.discord_bot.bot import build_client
+    from updater.presentation.discord_bot.config import BotConfig, UTC_PLUS_7
+
+    config = BotConfig(
+        env_path=Path(tmp_path / ".env"),
+        discord_token="token",
+        guild_id=1,
+        channel_id=2,
+        admin_role_id=3,
+        sync_time=(8, 0),
+        notify_time=(9, 0),
+        mongodb_uri="mongodb://localhost:27017",
+        mongodb_database="test",
+        tz=UTC_PLUS_7,
+    )
+    original_tree = app_commands.CommandTree
+    captured = {}
+
+    def capture_tree(client):
+        tree = original_tree(client)
+        captured["tree"] = tree
+        return tree
+
+    with (
+        patch("updater.presentation.discord_bot.bot.app_commands.CommandTree", side_effect=capture_tree),
+        patch("updater.presentation.discord_bot.bot._build_services", return_value=_services()),
+    ):
+        build_client(config)
+
+    guild_commands = captured["tree"]._guild_commands[1]
+    show_target = guild_commands["show-target"]
+
+    assert [parameter.name for parameter in show_target.parameters] == ["target_id", "limit"]
 
 
 def test_chunk_embeds_splits_in_batches_of_ten():

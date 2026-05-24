@@ -50,6 +50,39 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 UTC_PLUS_7 = timezone(timedelta(hours=7))
 
 
+def _sorted_targets(services: Services) -> list[Target]:
+    return sorted(services.target_repo.list_all(), key=lambda target: target.name.casefold())
+
+
+def _target_storage_id(target: Target) -> str:
+    return target.id or target.normalized_name
+
+
+def _vulnerability_lookup(vulnerabilities: list[Vulnerability]) -> dict[str, Vulnerability]:
+    lookup: dict[str, Vulnerability] = {}
+    for vulnerability in vulnerabilities:
+        if vulnerability.id:
+            lookup[vulnerability.id] = vulnerability
+        lookup[vulnerability.advisory_id] = vulnerability
+    return lookup
+
+
+def _vulnerability_sort_time(vulnerability: Vulnerability) -> datetime:
+    return vulnerability.published_date or vulnerability.created_at
+
+
+def _finding_for_target(vulnerability: Vulnerability, target: Target) -> dict[str, Any]:
+    return {
+        "advisory_id": vulnerability.advisory_id,
+        "aliases": list(vulnerability.aliases),
+        "cvss_score": vulnerability.cvss_score,
+        "severity": vulnerability.severity,
+        "description": vulnerability.description or "",
+        "references": list(vulnerability.references),
+        "target_names": [target.name],
+    }
+
+
 def _parse_date_filter(value: str | None) -> date | None:
     if value is None:
         return None
@@ -66,6 +99,18 @@ def _validate_search_year(year: int | None, today: date) -> None:
         return
     if year < 1999 or year > today.year + 1:
         raise ValueError(f"year must be between 1999 and {today.year + 1}")
+
+
+_VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL", "NONE"}
+
+
+def _validate_severity(severity: str | None) -> str | None:
+    if severity is None:
+        return None
+    upper = severity.strip().upper()
+    if upper not in _VALID_SEVERITIES:
+        raise ValueError(f"severity must be one of: {', '.join(sorted(_VALID_SEVERITIES))}")
+    return upper
 
 
 def _finding_years(finding: dict[str, Any], vulnerability: Vulnerability | None) -> set[int]:
@@ -92,43 +137,72 @@ def _created_date(vulnerability: Vulnerability | None, tz=UTC_PLUS_7) -> date | 
 def _format_search_summary(
     *,
     total: int,
+    severity: str | None,
     year: int | None,
-    from_day: date,
-    to_day: date,
+    from_day: date | None,
+    to_day: date | None,
+    scope_all: bool,
 ) -> str:
     filters: list[str] = []
+    if severity is not None:
+        filters.append(f"severity: {severity}")
     if year is not None:
         filters.append(f"year: {year}")
-    filters.append(f"collected: {from_day.isoformat()} to {to_day.isoformat()}")
+    if scope_all:
+        filters.append("scope: all")
+    elif from_day is not None and to_day is not None:
+        filters.append(f"collected: {from_day.isoformat()} to {to_day.isoformat()}")
     return f"Found {total} vulnerabilities (" + ", ".join(filters) + ")"
 
 
 async def handle_list_targets(services: Services) -> CommandResult:
-    targets = services.target_repo.list_all()
+    targets = _sorted_targets(services)
     if not targets:
         return CommandResult(text="No targets configured.")
-    lines = [f"- {t.name}" for t in targets]
+    lines = [f"{index}. {target.name}" for index, target in enumerate(targets, start=1)]
     return CommandResult(text="Targets:\n" + "\n".join(lines))
 
 
-async def handle_show_target(services: Services, *, name: str) -> CommandResult:
-    target = services.target_repo.find_by_name(name)
-    if target is None:
-        return CommandResult(text=f"Target {name!r} not found.")
-    target_id = target.id or target.normalized_name
-    linked = sum(
-        1
+async def handle_show_target(services: Services, *, target_id: int, limit: int | None) -> CommandResult:
+    targets = _sorted_targets(services)
+    if target_id < 1 or target_id > len(targets):
+        return CommandResult(
+            text=f"Invalid target ID. Use /list-targets to see available targets (1-{len(targets)}).",
+            ephemeral=True,
+        )
+
+    target = targets[target_id - 1]
+    storage_id = _target_storage_id(target)
+    links = [
+        link
         for link in services.target_vulnerability_repo.list_all()
-        if link.target_id == target_id
-    )
+        if link.target_id == storage_id
+    ]
+    vulnerabilities_by_id = _vulnerability_lookup(services.vulnerability_repo.list_all())
+    vulnerabilities = [
+        vulnerabilities_by_id[link.vulnerability_id]
+        for link in links
+        if link.vulnerability_id in vulnerabilities_by_id
+    ]
+    vulnerabilities.sort(key=_vulnerability_sort_time, reverse=True)
+
+    total = len(vulnerabilities)
+    if limit is not None and limit > 0:
+        vulnerabilities = vulnerabilities[:limit]
+
     lines = [
-        f"Name: {target.name}",
+        f"Target #{target_id}: {target.name}",
         f"Aliases: {', '.join(target.aliases) or '—'}",
         f"Vendor: {target.vendor or '—'}",
         f"Category: {target.category or '—'}",
-        f"Vulnerabilities: {linked}",
     ]
-    return CommandResult(text="\n".join(lines))
+    if total == 0:
+        lines.append("No vulnerabilities found.")
+    else:
+        lines.append(f"Showing {len(vulnerabilities)} of {total} vulnerabilities")
+
+    embeds = [build_finding_embed(_finding_for_target(vulnerability, target)) for vulnerability in vulnerabilities]
+    return CommandResult(text="\n".join(lines), embeds=embeds)
 
 
 async def handle_add_target(
@@ -257,6 +331,7 @@ async def handle_add_vuln(
 async def handle_sync_cves(services: Services, *, target_name: str | None) -> CommandResult:
     if target_name is not None and services.target_repo.find_by_name(target_name) is None:
         return CommandResult(text=f"Target {target_name!r} not found.")
+    sync_started_at = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     sync = SyncVulnerabilitiesService(
         services.target_repo,
         services.vulnerability_repo,
@@ -265,6 +340,7 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
     )
     result = await asyncio.to_thread(sync.sync_one, target_name) if target_name else await asyncio.to_thread(sync.sync_all)
 
+    vulnerabilities_by_id = _vulnerability_lookup(await asyncio.to_thread(services.vulnerability_repo.list_all))
     snapshot = await asyncio.to_thread(
         ExportService(
             services.target_repo,
@@ -278,6 +354,12 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
         findings = [
             f for f in findings if target_name.strip().lower() in [t.lower() for t in f["target_names"]]
         ]
+    findings = [
+        finding
+        for finding in findings
+        if (vulnerability := vulnerabilities_by_id.get(finding.get("advisory_id", ""))) is not None
+        and vulnerability.created_at >= sync_started_at
+    ]
 
     summary = (
         f"Sync complete. targets_processed={result.targets_processed} "
@@ -291,6 +373,7 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
 async def handle_search_vulns(
     services: Services,
     *,
+    severity: str | None,
     year: int | None,
     from_date: str | None,
     to_date: str | None,
@@ -298,21 +381,26 @@ async def handle_search_vulns(
 ) -> CommandResult:
     today = today or datetime.now(UTC_PLUS_7).date()
     try:
+        normalized_severity = _validate_severity(severity)
         _validate_search_year(year, today)
         from_day = _parse_date_filter(from_date)
         to_day = _parse_date_filter(to_date)
     except ValueError as exc:
         return CommandResult(text=str(exc), ephemeral=True)
 
-    if from_day is None and to_day is None:
+    has_explicit_date_filter = from_day is not None or to_day is not None
+    scope_all = normalized_severity is not None and year is None and not has_explicit_date_filter
+
+    if has_explicit_date_filter:
+        if from_day is None:
+            from_day = to_day
+        elif to_day is None:
+            to_day = from_day
+    elif normalized_severity is None:
         from_day = today
         to_day = today
-    elif from_day is None:
-        from_day = to_day
-    elif to_day is None:
-        to_day = from_day
 
-    if from_day > to_day:
+    if from_day is not None and to_day is not None and from_day > to_day:
         return CommandResult(text="from_date must be before or equal to to_date", ephemeral=True)
 
     vulnerabilities = await asyncio.to_thread(services.vulnerability_repo.list_all)
@@ -334,18 +422,24 @@ async def handle_search_vulns(
     filtered: list[dict[str, Any]] = []
     for finding in findings:
         vulnerability = vulnerabilities_by_id.get(finding.get("advisory_id", ""))
-        created_day = _created_date(vulnerability)
-        if created_day is None or created_day < from_day or created_day > to_day:
-            continue
+        if from_day is not None:
+            created_day = _created_date(vulnerability)
+            if created_day is None or created_day < from_day or created_day > to_day:
+                continue
         if year is not None and year not in _finding_years(finding, vulnerability):
             continue
+        if normalized_severity is not None:
+            vuln_severity = (finding.get("severity") or "NONE").upper()
+            if vuln_severity != normalized_severity:
+                continue
         filtered.append(finding)
 
     if not filtered:
         return CommandResult(text="No vulnerabilities found matching the filters.")
 
     summary = _format_search_summary(
-        total=len(filtered), year=year, from_day=from_day, to_day=to_day
+        total=len(filtered), severity=normalized_severity, year=year,
+        from_day=from_day, to_day=to_day, scope_all=scope_all,
     )
     return CommandResult(
         text=summary,
