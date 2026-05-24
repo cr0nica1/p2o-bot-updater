@@ -241,18 +241,21 @@ def build_client(config: BotConfig) -> discord.Client:
 
     @tree.command(name="search-vulns", description="Search stored vulnerabilities", guild=guild)
     @app_commands.describe(
+        severity="Optional severity filter (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL, NONE)",
         year="Optional year to match by advisory ID or published date",
         from_date="Optional collected start date (YYYY-MM-DD); defaults to today",
         to_date="Optional collected end date (YYYY-MM-DD); defaults to today",
     )
     async def search_vulns(
         interaction: discord.Interaction,
+        severity: str | None = None,
         year: int | None = None,
         from_date: str | None = None,
         to_date: str | None = None,
     ):
         result = await cmd.handle_search_vulns(
             services,
+            severity=severity,
             year=year,
             from_date=from_date,
             to_date=to_date,

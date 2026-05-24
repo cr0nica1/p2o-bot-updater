@@ -491,6 +491,7 @@ async def test_search_vulns_year_matches_cve_id_year():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -518,6 +519,7 @@ async def test_search_vulns_year_matches_zdi_short_year():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -545,6 +547,7 @@ async def test_search_vulns_year_matches_published_date_year():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -574,6 +577,7 @@ async def test_search_vulns_filters_created_at_date_range():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=None,
         from_date="2026-05-19",
         to_date="2026-05-21",
@@ -603,6 +607,7 @@ async def test_search_vulns_defaults_to_today_when_no_dates_given():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=None,
         from_date=None,
         to_date=None,
@@ -633,6 +638,7 @@ async def test_search_vulns_defaults_to_today_uses_utc_plus_7_date():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=None,
         from_date=None,
         to_date=None,
@@ -667,6 +673,7 @@ async def test_search_vulns_applies_year_and_date_with_and_logic():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -682,6 +689,7 @@ async def test_search_vulns_returns_no_results_message():
 
     result = await handle_search_vulns(
         services,
+        severity=None,
         year=2024,
         from_date="2026-05-21",
         to_date="2026-05-21",
@@ -695,6 +703,7 @@ async def test_search_vulns_returns_no_results_message():
 async def test_search_vulns_rejects_invalid_date():
     result = await handle_search_vulns(
         _services(),
+        severity=None,
         year=None,
         from_date="2026/05/21",
         to_date=None,
@@ -708,6 +717,7 @@ async def test_search_vulns_rejects_invalid_date():
 async def test_search_vulns_rejects_out_of_range_year():
     result = await handle_search_vulns(
         _services(),
+        severity=None,
         year=1998,
         from_date=None,
         to_date=None,
@@ -716,6 +726,143 @@ async def test_search_vulns_rejects_out_of_range_year():
 
     assert "year" in result.text.lower()
     assert result.ephemeral is True
+
+
+async def test_search_vulns_severity_only_searches_entire_database():
+    old_high = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="HIGH",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    new_low = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        severity="LOW",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    new_high = Vulnerability(
+        advisory_id="CVE-2024-0003",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([old_high, new_low, new_high]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="A", vulnerability_id="CVE-2024-0001"),
+            TargetVulnerability(target_id="t2", target_name="B", vulnerability_id="CVE-2024-0002"),
+            TargetVulnerability(target_id="t3", target_name="C", vulnerability_id="CVE-2024-0003"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        severity="HIGH",
+        year=None,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert "severity: HIGH" in result.text
+    assert "scope: all" in result.text
+    assert len(result.embeds) == 2
+
+
+async def test_search_vulns_severity_with_date_filter():
+    high_1 = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+    )
+    high_2 = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    low = Vulnerability(
+        advisory_id="CVE-2024-0003",
+        severity="LOW",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([high_1, high_2, low]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="A", vulnerability_id="CVE-2024-0001"),
+            TargetVulnerability(target_id="t2", target_name="B", vulnerability_id="CVE-2024-0002"),
+            TargetVulnerability(target_id="t3", target_name="C", vulnerability_id="CVE-2024-0003"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        severity="HIGH",
+        year=None,
+        from_date="2026-05-21",
+        to_date="2026-05-21",
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 1
+    assert result.embeds[0].title == "CVE-2024-0002"
+    assert "severity: HIGH" in result.text
+    assert "collected: 2026-05-21 to 2026-05-21" in result.text
+
+
+async def test_search_vulns_severity_with_year_filter():
+    vuln_2024 = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        severity="MEDIUM",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    old_vuln_2024 = Vulnerability(
+        advisory_id="CVE-2024-0004",
+        severity="MEDIUM",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    vuln_2023 = Vulnerability(
+        advisory_id="CVE-2023-0002",
+        severity="MEDIUM",
+        created_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+    services = _services(
+        vuln_repo=FakeVulnRepo([vuln_2024, old_vuln_2024, vuln_2023]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="A", vulnerability_id="CVE-2024-0001"),
+            TargetVulnerability(target_id="t2", target_name="B", vulnerability_id="CVE-2024-0004"),
+            TargetVulnerability(target_id="t3", target_name="C", vulnerability_id="CVE-2023-0002"),
+        ]),
+    )
+
+    result = await handle_search_vulns(
+        services,
+        severity="MEDIUM",
+        year=2024,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert len(result.embeds) == 2
+    assert {embed.title for embed in result.embeds} == {"CVE-2024-0001", "CVE-2024-0004"}
+    assert "severity: MEDIUM" in result.text
+    assert "year: 2024" in result.text
+    assert "collected:" not in result.text
+
+
+async def test_search_vulns_rejects_invalid_severity():
+    services = _services()
+
+    result = await handle_search_vulns(
+        services,
+        severity="URGENT",
+        year=None,
+        from_date=None,
+        to_date=None,
+        today=datetime(2026, 5, 21, tzinfo=timezone.utc).date(),
+    )
+
+    assert result.ephemeral is True
+    assert "CRITICAL" in result.text
+    assert "HIGH" in result.text
 
 
 def test_bot_module_exposes_main_and_build_client():

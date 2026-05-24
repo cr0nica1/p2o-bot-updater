@@ -101,6 +101,18 @@ def _validate_search_year(year: int | None, today: date) -> None:
         raise ValueError(f"year must be between 1999 and {today.year + 1}")
 
 
+_VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL", "NONE"}
+
+
+def _validate_severity(severity: str | None) -> str | None:
+    if severity is None:
+        return None
+    upper = severity.strip().upper()
+    if upper not in _VALID_SEVERITIES:
+        raise ValueError(f"severity must be one of: {', '.join(sorted(_VALID_SEVERITIES))}")
+    return upper
+
+
 def _finding_years(finding: dict[str, Any], vulnerability: Vulnerability | None) -> set[int]:
     values = [finding.get("advisory_id", ""), *finding.get("aliases", [])]
     years = {int(match.group(1)) for value in values for match in _CVE_YEAR_RE.finditer(value)}
@@ -125,14 +137,21 @@ def _created_date(vulnerability: Vulnerability | None, tz=UTC_PLUS_7) -> date | 
 def _format_search_summary(
     *,
     total: int,
+    severity: str | None,
     year: int | None,
-    from_day: date,
-    to_day: date,
+    from_day: date | None,
+    to_day: date | None,
+    scope_all: bool,
 ) -> str:
     filters: list[str] = []
+    if severity is not None:
+        filters.append(f"severity: {severity}")
     if year is not None:
         filters.append(f"year: {year}")
-    filters.append(f"collected: {from_day.isoformat()} to {to_day.isoformat()}")
+    if scope_all:
+        filters.append("scope: all")
+    elif from_day is not None and to_day is not None:
+        filters.append(f"collected: {from_day.isoformat()} to {to_day.isoformat()}")
     return f"Found {total} vulnerabilities (" + ", ".join(filters) + ")"
 
 
@@ -354,6 +373,7 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
 async def handle_search_vulns(
     services: Services,
     *,
+    severity: str | None,
     year: int | None,
     from_date: str | None,
     to_date: str | None,
@@ -361,21 +381,26 @@ async def handle_search_vulns(
 ) -> CommandResult:
     today = today or datetime.now(UTC_PLUS_7).date()
     try:
+        normalized_severity = _validate_severity(severity)
         _validate_search_year(year, today)
         from_day = _parse_date_filter(from_date)
         to_day = _parse_date_filter(to_date)
     except ValueError as exc:
         return CommandResult(text=str(exc), ephemeral=True)
 
-    if from_day is None and to_day is None:
+    has_explicit_date_filter = from_day is not None or to_day is not None
+    scope_all = normalized_severity is not None and year is None and not has_explicit_date_filter
+
+    if has_explicit_date_filter:
+        if from_day is None:
+            from_day = to_day
+        elif to_day is None:
+            to_day = from_day
+    elif normalized_severity is None:
         from_day = today
         to_day = today
-    elif from_day is None:
-        from_day = to_day
-    elif to_day is None:
-        to_day = from_day
 
-    if from_day > to_day:
+    if from_day is not None and to_day is not None and from_day > to_day:
         return CommandResult(text="from_date must be before or equal to to_date", ephemeral=True)
 
     vulnerabilities = await asyncio.to_thread(services.vulnerability_repo.list_all)
@@ -397,18 +422,24 @@ async def handle_search_vulns(
     filtered: list[dict[str, Any]] = []
     for finding in findings:
         vulnerability = vulnerabilities_by_id.get(finding.get("advisory_id", ""))
-        created_day = _created_date(vulnerability)
-        if created_day is None or created_day < from_day or created_day > to_day:
-            continue
+        if from_day is not None:
+            created_day = _created_date(vulnerability)
+            if created_day is None or created_day < from_day or created_day > to_day:
+                continue
         if year is not None and year not in _finding_years(finding, vulnerability):
             continue
+        if normalized_severity is not None:
+            vuln_severity = (finding.get("severity") or "NONE").upper()
+            if vuln_severity != normalized_severity:
+                continue
         filtered.append(finding)
 
     if not filtered:
         return CommandResult(text="No vulnerabilities found matching the filters.")
 
     summary = _format_search_summary(
-        total=len(filtered), year=year, from_day=from_day, to_day=to_day
+        total=len(filtered), severity=normalized_severity, year=year,
+        from_day=from_day, to_day=to_day, scope_all=scope_all,
     )
     return CommandResult(
         text=summary,
