@@ -74,6 +74,13 @@ class FakeVulnRepo:
     def list_all(self):
         return list(self.items.values())
 
+    def delete(self, vulnerability_id):
+        for advisory_id, vulnerability in list(self.items.items()):
+            if vulnerability.id == vulnerability_id or vulnerability.advisory_id == vulnerability_id:
+                del self.items[advisory_id]
+                return True
+        return False
+
     def delete_all(self):
         deleted = len(self.items)
         self.items.clear()
@@ -237,15 +244,63 @@ async def test_add_target_creates_target():
 
 async def test_remove_target_removes_target_and_links():
     target = Target(id="t1", name="Adobe Reader")
+    vulnerability = Vulnerability(id="v1", advisory_id="CVE-2024-0001")
     link = TargetVulnerability(target_id="t1", vulnerability_id="v1")
     services = _services(
         target_repo=FakeTargetRepo([target]),
+        vuln_repo=FakeVulnRepo([vulnerability]),
         link_repo=FakeLinkRepo([link]),
     )
     result = await handle_remove_target(services, names=["Adobe Reader"])
     assert "Removed" in result.text
     assert services.target_repo.list_all() == []
     assert services.target_vulnerability_repo.list_all() == []
+    assert services.vulnerability_repo.list_all() == []
+
+
+async def test_remove_target_preserves_vulnerability_linked_to_other_target():
+    removed_target = Target(id="t1", name="Adobe Reader")
+    kept_target = Target(id="t2", name="Canon")
+    vulnerability = Vulnerability(id="v1", advisory_id="CVE-2024-0001")
+    services = _services(
+        target_repo=FakeTargetRepo([removed_target, kept_target]),
+        vuln_repo=FakeVulnRepo([vulnerability]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", vulnerability_id="v1"),
+            TargetVulnerability(target_id="t2", vulnerability_id="v1"),
+        ]),
+    )
+
+    result = await handle_remove_target(services, names=["Adobe Reader"])
+
+    assert "Removed" in result.text
+    assert [target.name for target in services.target_repo.list_all()] == ["Canon"]
+    assert services.vulnerability_repo.list_all() == [vulnerability]
+    assert [
+        (link.target_id, link.vulnerability_id)
+        for link in services.target_vulnerability_repo.list_all()
+    ] == [("t2", "v1")]
+
+
+async def test_remove_multiple_targets_deletes_vulnerability_linked_only_to_removed_targets():
+    target_a = Target(id="t1", name="Adobe Reader")
+    target_b = Target(id="t2", name="Acrobat")
+    vulnerability = Vulnerability(id="v1", advisory_id="CVE-2024-0001")
+    services = _services(
+        target_repo=FakeTargetRepo([target_a, target_b]),
+        vuln_repo=FakeVulnRepo([vulnerability]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", vulnerability_id="v1"),
+            TargetVulnerability(target_id="t2", vulnerability_id="v1"),
+        ]),
+    )
+
+    result = await handle_remove_target(services, names=["Adobe Reader", "Acrobat"])
+
+    assert "Removed" in result.text
+    assert services.target_repo.list_all() == []
+    assert services.target_vulnerability_repo.list_all() == []
+    assert services.vulnerability_repo.list_all() == []
 
 
 async def test_remove_target_reports_missing():

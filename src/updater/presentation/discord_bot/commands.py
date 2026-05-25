@@ -226,13 +226,39 @@ async def handle_add_target(
 async def handle_remove_target(services: Services, *, names: list[str]) -> CommandResult:
     removed: list[str] = []
     missing: list[str] = []
+    resolved: list[tuple[str, str]] = []
+
     for name in names:
         target = services.target_repo.find_by_name(name)
         if target is None:
             missing.append(name)
             continue
         target_id = target.id or target.normalized_name
-        services.target_vulnerability_repo.delete_by_target(target_id)
+        resolved.append((name, target_id))
+
+    target_ids = {tid for _, tid in resolved}
+    all_links = services.target_vulnerability_repo.list_all()
+
+    candidate_ids = {
+        link.vulnerability_id
+        for link in all_links
+        if link.target_id in target_ids
+    }
+    owned_ids = {
+        vid
+        for vid in candidate_ids
+        if all(
+            link.target_id in target_ids
+            for link in all_links
+            if link.vulnerability_id == vid
+        )
+    }
+
+    for vid in owned_ids:
+        services.vulnerability_repo.delete(vid)
+
+    for name, tid in resolved:
+        services.target_vulnerability_repo.delete_by_target(tid)
         services.target_repo.delete(name)
         removed.append(name)
 

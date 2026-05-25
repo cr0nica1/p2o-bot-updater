@@ -269,3 +269,38 @@ def test_target_vulnerability_repository_delete_by_target_returns_count():
 
     assert deleted == 3
     assert collection.last_filter == {"target_id": "target-1"}
+
+
+def test_vulnerability_repository_delete_by_advisory_id_returns_true_when_match_found():
+    class FakeCollection:
+        def __init__(self):
+            self.last_filter = None
+
+        def delete_one(self, filter):
+            self.last_filter = filter
+            class Result:
+                deleted_count = 1
+            return Result()
+
+    collection = FakeCollection()
+    repo = MongoVulnerabilityRepository.__new__(MongoVulnerabilityRepository)
+    repo.collection = collection
+
+    deleted = repo.delete("CVE-2024-0001")
+
+    assert deleted is True
+    assert "$or" in collection.last_filter
+    assert {"advisory_id": "CVE-2024-0001"} in collection.last_filter["$or"]
+
+
+def test_vulnerability_repository_delete_returns_false_when_no_match():
+    class FakeCollection:
+        def delete_one(self, filter):
+            class Result:
+                deleted_count = 0
+            return Result()
+
+    repo = MongoVulnerabilityRepository.__new__(MongoVulnerabilityRepository)
+    repo.collection = FakeCollection()
+
+    assert repo.delete("missing-vuln") is False

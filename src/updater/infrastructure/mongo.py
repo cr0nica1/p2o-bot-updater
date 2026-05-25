@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 try:
+    from bson import ObjectId
     from pymongo import ASCENDING, MongoClient, ReturnDocument
 except ModuleNotFoundError:  # pragma: no cover - exercised only when dependency is absent
+    ObjectId = None
     ASCENDING = 1
     MongoClient = None
     ReturnDocument = None
@@ -248,6 +250,16 @@ class MongoVulnerabilityRepository:
 
     def list_all(self) -> list[Vulnerability]:
         return [vulnerability_from_document(document) for document in self.collection.find().sort("advisory_id", ASCENDING)]
+
+    def delete(self, vulnerability_id: str) -> bool:
+        filters: list[dict[str, Any]] = [
+            {"advisory_id": vulnerability_id},
+            {"_id": vulnerability_id},
+        ]
+        if ObjectId is not None and ObjectId.is_valid(vulnerability_id):
+            filters.append({"_id": ObjectId(vulnerability_id)})
+        result = self.collection.delete_one({"$or": filters})
+        return result.deleted_count > 0
 
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
