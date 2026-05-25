@@ -90,6 +90,28 @@ The bot connects to Discord, registers slash commands, and starts the scheduler.
 
 Read-only commands (`/show-target`, `/list-targets`, `/search-vulns`, and `/show-schedule`) are open to all server members. All other commands require the admin role configured with `DISCORD_ADMIN_ROLE_ID`.
 
+## Firmware lookup prototype CLI
+
+The firmware lookup prototype is CLI-only. It resolves a target by the same numbered ID shown by `/list-targets`, uses `Target.vendor_alias` as the vendor-defined product slug, and uses a per-vendor crawler config to fetch and parse the vendor firmware page.
+
+Add or update a vendor crawler config:
+
+```bash
+vendor-config add \
+  --vendor "Canon" \
+  --url-template "https://vendor.example/downloads/{alias}/firmware" \
+  --attr-id "firmware" \
+  --regex "Version ([^<]+).*href=\"([^\"]+)\""
+```
+
+Run a lookup:
+
+```bash
+firmware-lookup --target-id 2
+```
+
+Regex capture group 1 is the firmware version. Capture group 2 is the firmware download URL. Vendor URL templates must use HTTPS and contain `{alias}`.
+
 ## Target CSV format
 
 The CSV input is intentionally flexible so users can edit it manually.
@@ -102,6 +124,7 @@ Optional columns:
 
 - `aliases` — semicolon-separated alternative names
 - `vendor`
+- `vendor_alias` — vendor-defined product slug/model identifier used by firmware lookup URL templates
 - `category`
 - `version`
 - `version_type` — for example `software` or `firmware`
@@ -121,9 +144,9 @@ VMware Workstation
 Example with aliases and version metadata:
 
 ```csv
-name,aliases,vendor,category,version,version_type
-Adobe Acrobat Reader,Acrobat Reader;Adobe Reader,Adobe,document reader,2024.005.20320,software
-VMware Workstation,VMware Workstation Pro;Workstation,VMware,virtualization,,
+name,aliases,vendor,vendor_alias,category,version,version_type
+Adobe Acrobat Reader,Acrobat Reader;Adobe Reader,Adobe,acrobat-reader,document reader,2024.005.20320,software
+VMware Workstation,VMware Workstation Pro;Workstation,VMware,workstation-pro,virtualization,,
 ```
 
 A sample file is included at:
