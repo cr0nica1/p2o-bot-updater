@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from updater.domain.models import Target, TargetVersion, TargetVulnerability, Vulnerability
+from updater.domain.models import Target, TargetVersion, TargetVulnerability, VendorConfig, Vulnerability
 
 
 class TargetRepository(Protocol):
@@ -16,6 +16,13 @@ class TargetRepository(Protocol):
 class TargetVersionRepository(Protocol):
     def upsert(self, version: TargetVersion) -> TargetVersion: ...
     def delete_all(self) -> int: ...
+
+
+class VendorConfigRepository(Protocol):
+    def upsert(self, config: VendorConfig) -> VendorConfig: ...
+    def find_by_vendor(self, vendor: str) -> VendorConfig | None: ...
+    def list_all(self) -> list[VendorConfig]: ...
+    def delete(self, vendor: str) -> bool: ...
 
 
 class VulnerabilityRepository(Protocol):

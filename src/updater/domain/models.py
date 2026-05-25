@@ -31,6 +31,7 @@ class Target:
     name: str
     aliases: list[str] = field(default_factory=list)
     vendor: str | None = None
+    vendor_alias: str | None = None
     category: str | None = None
     raw_metadata: dict[str, Any] = field(default_factory=dict)
     id: str | None = None
@@ -57,6 +58,21 @@ class TargetVersion:
     id: str | None = None
     first_seen_at: datetime = field(default_factory=utc_now)
     last_seen_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass
+class VendorConfig:
+    vendor: str
+    url_template: str
+    attr_id: str
+    regex: str
+    id: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    @property
+    def normalized_vendor(self) -> str:
+        return normalize_name(self.vendor)
 
 
 @dataclass

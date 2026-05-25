@@ -59,3 +59,27 @@ def test_target_vulnerability_merges_evidence_without_duplicates():
 
     assert link.matched_queries == ["Adobe Reader", "Acrobat Reader"]
     assert [item["source"] for item in link.evidence_sources] == ["nvd", "zdi"]
+
+
+from updater.domain.models import Target, VendorConfig
+
+
+def test_target_stores_vendor_alias():
+    target = Target(name="Canon MF654Cdw", vendor="Canon", vendor_alias="mf654cdw")
+
+    assert target.vendor_alias == "mf654cdw"
+
+
+def test_vendor_config_stores_crawler_settings():
+    config = VendorConfig(
+        vendor="Canon",
+        url_template="https://vendor.example/downloads/{alias}/firmware",
+        attr_id="firmware",
+        regex=r"Version ([^<]+).*href=\"([^\"]+)\"",
+    )
+
+    assert config.vendor == "Canon"
+    assert config.normalized_vendor == "canon"
+    assert config.url_template == "https://vendor.example/downloads/{alias}/firmware"
+    assert config.attr_id == "firmware"
+    assert config.regex == r"Version ([^<]+).*href=\"([^\"]+)\""
