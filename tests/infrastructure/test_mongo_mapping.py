@@ -1,11 +1,15 @@
-from updater.domain.models import Target, TargetVulnerability, Vulnerability
+from updater.domain.models import Target, TargetVulnerability, VendorConfig, Vulnerability
 from updater.infrastructure.mongo import (
     MongoTargetRepository,
     MongoTargetVersionRepository,
     MongoTargetVulnerabilityRepository,
+    MongoVendorConfigRepository,
     MongoVulnerabilityRepository,
+    target_from_document,
     target_to_document,
     target_vulnerability_to_document,
+    vendor_config_from_document,
+    vendor_config_to_document,
     vulnerability_to_document,
 )
 
@@ -304,3 +308,81 @@ def test_vulnerability_repository_delete_returns_false_when_no_match():
     repo.collection = FakeCollection()
 
     assert repo.delete("missing-vuln") is False
+
+
+def test_target_document_contains_vendor_alias():
+    target = Target(name="Canon MF654Cdw", vendor="Canon", vendor_alias="mf654cdw")
+
+    document = target_to_document(target)
+    restored = target_from_document(
+        {
+            "_id": "target-1",
+            **document,
+            "created_at": target.created_at,
+            "updated_at": target.updated_at,
+        }
+    )
+
+    assert document["vendor_alias"] == "mf654cdw"
+    assert restored.vendor_alias == "mf654cdw"
+
+
+def test_vendor_config_document_contains_normalized_vendor():
+    config = VendorConfig(
+        vendor=" Canon ",
+        url_template="https://vendor.example/{alias}",
+        attr_id="firmware",
+        regex=r"Version ([^<]+).*href=\"([^\"]+)\"",
+    )
+
+    document = vendor_config_to_document(config)
+
+    assert document["vendor"] == " Canon "
+    assert document["normalized_vendor"] == "canon"
+    assert document["url_template"] == "https://vendor.example/{alias}"
+    assert document["attr_id"] == "firmware"
+    assert document["regex"] == r"Version ([^<]+).*href=\"([^\"]+)\""
+
+
+def test_vendor_config_from_document_restores_model():
+    config = VendorConfig(
+        vendor="Canon",
+        url_template="https://vendor.example/{alias}",
+        attr_id="firmware",
+        regex="Version (.+) (.+)",
+    )
+    document = {
+        "_id": "config-1",
+        **vendor_config_to_document(config),
+        "created_at": config.created_at,
+        "updated_at": config.updated_at,
+    }
+
+    restored = vendor_config_from_document(document)
+
+    assert restored.id == "config-1"
+    assert restored.vendor == "Canon"
+    assert restored.normalized_vendor == "canon"
+
+
+def test_vendor_config_repository_delete_returns_true_when_match_found():
+    class FakeCollection:
+        def __init__(self):
+            self.last_filter = None
+
+        def delete_one(self, filter):
+            self.last_filter = filter
+
+            class Result:
+                deleted_count = 1
+
+            return Result()
+
+    collection = FakeCollection()
+    repo = MongoVendorConfigRepository.__new__(MongoVendorConfigRepository)
+    repo.collection = collection
+
+    deleted = repo.delete(" Canon ")
+
+    assert deleted is True
+    assert collection.last_filter == {"normalized_vendor": "canon"}

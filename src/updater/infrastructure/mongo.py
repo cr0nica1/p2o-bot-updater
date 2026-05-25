@@ -15,6 +15,7 @@ from updater.domain.models import (
     Target,
     TargetVersion,
     TargetVulnerability,
+    VendorConfig,
     Vulnerability,
     normalize_name,
 )
@@ -31,6 +32,7 @@ def target_to_document(target: Target) -> dict[str, Any]:
         "normalized_name": target.normalized_name,
         "aliases": list(target.aliases),
         "vendor": target.vendor,
+        "vendor_alias": target.vendor_alias,
         "category": target.category,
         "raw_metadata": dict(target.raw_metadata),
         "created_at": target.created_at,
@@ -44,6 +46,7 @@ def target_from_document(document: dict[str, Any]) -> Target:
         name=document["name"],
         aliases=list(document.get("aliases", [])),
         vendor=document.get("vendor"),
+        vendor_alias=document.get("vendor_alias"),
         category=document.get("category"),
         raw_metadata=dict(document.get("raw_metadata", {})),
         created_at=document["created_at"],
@@ -77,6 +80,30 @@ def target_version_from_document(document: dict[str, Any]) -> TargetVersion:
         raw=dict(document.get("raw", {})),
         first_seen_at=document["first_seen_at"],
         last_seen_at=document["last_seen_at"],
+    )
+
+
+def vendor_config_to_document(config: VendorConfig) -> dict[str, Any]:
+    return {
+        "vendor": config.vendor,
+        "normalized_vendor": config.normalized_vendor,
+        "url_template": config.url_template,
+        "attr_id": config.attr_id,
+        "regex": config.regex,
+        "created_at": config.created_at,
+        "updated_at": config.updated_at,
+    }
+
+
+def vendor_config_from_document(document: dict[str, Any]) -> VendorConfig:
+    return VendorConfig(
+        id=_document_id(document),
+        vendor=document["vendor"],
+        url_template=document["url_template"],
+        attr_id=document["attr_id"],
+        regex=document["regex"],
+        created_at=document["created_at"],
+        updated_at=document["updated_at"],
     )
 
 
@@ -175,6 +202,7 @@ class MongoDatabase:
             [("target_id", ASCENDING), ("vulnerability_id", ASCENDING)],
             unique=True,
         )
+        self.db.vendor_configs.create_index("normalized_vendor", unique=True)
 
 
 class MongoTargetRepository:
@@ -228,6 +256,33 @@ class MongoTargetVersionRepository:
 
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
+
+
+class MongoVendorConfigRepository:
+    def __init__(self, db: Any) -> None:
+        self.collection = _as_collection(db, "vendor_configs")
+
+    def upsert(self, config: VendorConfig) -> VendorConfig:
+        document = vendor_config_to_document(config)
+        created_at = document.pop("created_at")
+        updated = self.collection.find_one_and_update(
+            {"normalized_vendor": document["normalized_vendor"]},
+            {"$set": document, "$setOnInsert": {"created_at": created_at}},
+            upsert=True,
+            return_document=_return_document_after(),
+        )
+        return vendor_config_from_document(updated)
+
+    def find_by_vendor(self, vendor: str) -> VendorConfig | None:
+        document = self.collection.find_one({"normalized_vendor": normalize_name(vendor)})
+        return vendor_config_from_document(document) if document else None
+
+    def list_all(self) -> list[VendorConfig]:
+        return [vendor_config_from_document(document) for document in self.collection.find().sort("normalized_vendor", ASCENDING)]
+
+    def delete(self, vendor: str) -> bool:
+        result = self.collection.delete_one({"normalized_vendor": normalize_name(vendor)})
+        return result.deleted_count > 0
 
 
 class MongoVulnerabilityRepository:

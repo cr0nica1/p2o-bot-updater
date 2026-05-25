@@ -12,6 +12,7 @@ KNOWN_COLUMNS = {
     "name",
     "aliases",
     "vendor",
+    "vendor_alias",
     "category",
     "version",
     "version_type",
@@ -48,6 +49,7 @@ class CsvTargetLoader:
                     name=name,
                     aliases=_split_aliases(row.get("aliases")),
                     vendor=_clean_optional(row.get("vendor")),
+                    vendor_alias=_clean_optional(row.get("vendor_alias")),
                     category=_clean_optional(row.get("category")),
                     raw_metadata=_unknown_metadata(row),
                 )

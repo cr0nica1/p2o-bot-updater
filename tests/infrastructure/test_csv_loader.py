@@ -66,3 +66,18 @@ def test_skips_missing_name_rows(tmp_path: Path):
 
     assert [item.target.name for item in rows.items] == ["Valid Target"]
     assert rows.errors == ["row 2: missing required name"]
+
+
+def test_loads_vendor_alias_as_known_target_field(tmp_path: Path):
+    csv_path = tmp_path / "targets.csv"
+    csv_path.write_text(
+        "name,vendor,vendor_alias,notes\n"
+        "Canon MF654Cdw,Canon,mf654cdw,contest target\n",
+        encoding="utf-8",
+    )
+
+    rows = CsvTargetLoader().load(csv_path)
+
+    assert rows.errors == []
+    assert rows.items[0].target.vendor_alias == "mf654cdw"
+    assert rows.items[0].target.raw_metadata == {"notes": "contest target"}
