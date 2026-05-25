@@ -24,6 +24,8 @@ dev = [
 
 [project.scripts]
 updater-bot = "updater.presentation.discord_bot.bot:main"
+firmware-lookup = "updater.cli.firmware_lookup:main"
+vendor-config = "updater.cli.vendor_config:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
