@@ -28,11 +28,17 @@ class CloakBrowserAdapter:
             browser = playwright.chromium.launch(headless=self.headless)
             context = browser.new_context()
             page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=self.timeout_ms)
+            page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
             locator = page.locator(f"#{element_id}")
             if locator.count() == 0:
                 raise BrowserLaunchError(f"Element #{element_id} not found at {url}.")
-            return locator.first.inner_html(timeout=self.timeout_ms)
+            html = locator.first.inner_html(timeout=self.timeout_ms)
+            wait_for_timeout = getattr(page, "wait_for_timeout", None)
+            if wait_for_timeout is not None:
+                for _ in range(4):
+                    wait_for_timeout(500)
+                    html = locator.first.inner_html(timeout=self.timeout_ms)
+            return html
         except BrowserLaunchError:
             raise
         except Exception as exc:

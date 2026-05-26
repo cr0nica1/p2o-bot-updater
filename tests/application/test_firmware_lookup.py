@@ -89,6 +89,49 @@ def test_lookup_url_encodes_vendor_alias():
     assert browser.calls == [("https://vendor.example/downloads/model%20x", "firmware")]
 
 
+def test_lookup_preserves_slashes_in_vendor_alias_path_segments():
+    target = Target(name="TP-Link Archer C6", vendor="TP-Link", vendor_alias="archer-c6/v4")
+    config = VendorConfig(
+        vendor="TP-Link",
+        url_template="https://www.tp-link.com/uk/support/download/{alias}/#Firmware",
+        attr_id="Firmware",
+        regex=r"(?=.*Version ([^<]+)).*href=\"([^\"]+)\"",
+    )
+    browser = FakeBrowser('<a href="https://static.tp-link.com/fw.zip">Version 1.0</a>')
+    service = FirmwareLookupService(
+        target_repo=FakeTargetRepository([target]),
+        vendor_config_repo=FakeVendorConfigRepository([config]),
+        browser=browser,
+    )
+
+    service.lookup(1)
+
+    assert browser.calls == [("https://www.tp-link.com/uk/support/download/archer-c6/v4/#Firmware", "Firmware")]
+
+
+def test_lookup_with_inputs_uses_runtime_url_attr_and_regex():
+    target = Target(name="TP-Link Archer C6", vendor="TP-Link", vendor_alias="archer-c6/v4")
+    browser = FakeBrowser('<span>Archer C6(EU)_V4_1.13.7 Build 240515</span><a href="firmware.zip">Download</a>')
+    service = FirmwareLookupService(
+        target_repo=FakeTargetRepository([target]),
+        vendor_config_repo=FakeVendorConfigRepository([]),
+        browser=browser,
+    )
+
+    result = service.lookup_with_inputs(
+        target_id=1,
+        url_template="https://www.tp-link.com/uk/support/download/{alias}/#Firmware",
+        attr_id="tabpanel-Firmware",
+        regex=r"(Archer C6\(EU\)_V4_[^<]+)[\s\S]*href=\"([^\"]+)\"",
+    )
+
+    assert browser.calls == [("https://www.tp-link.com/uk/support/download/archer-c6/v4/#Firmware", "tabpanel-Firmware")]
+    assert result.target_name == "TP-Link Archer C6"
+    assert result.vendor == "TP-Link"
+    assert result.version == "Archer C6(EU)_V4_1.13.7 Build 240515"
+    assert result.download_url == "https://www.tp-link.com/uk/support/download/archer-c6/v4/firmware.zip"
+
+
 @pytest.mark.parametrize(
     "target_id,message",
     [

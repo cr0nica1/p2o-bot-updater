@@ -24,6 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="firmware-lookup")
     parser.add_argument("--env", default=".env", help="Path to .env file")
     parser.add_argument("--target-id", required=True, type=int, help="Target number from /list-targets")
+    parser.add_argument("--url-template", help="HTTPS URL template containing {alias}")
+    parser.add_argument("--attr-id", help="HTML element ID whose inner HTML will be searched")
+    parser.add_argument("--regex", help="Regex with group 1 as version and group 2 as download URL")
     return parser
 
 
@@ -32,7 +35,18 @@ def main(argv: list[str] | None = None, *, service=None) -> int:
     args = parser.parse_args(argv)
     try:
         lookup_service = service or _build_service(Path(args.env))
-        result = lookup_service.lookup(args.target_id)
+        runtime_values = [args.url_template, args.attr_id, args.regex]
+        if any(value is not None for value in runtime_values):
+            if not all(runtime_values):
+                raise FirmwareLookupError("--url-template, --attr-id, and --regex must be provided together")
+            result = lookup_service.lookup_with_inputs(
+                target_id=args.target_id,
+                url_template=args.url_template,
+                attr_id=args.attr_id,
+                regex=args.regex,
+            )
+        else:
+            result = lookup_service.lookup(args.target_id)
     except (ConfigError, FirmwareLookupError, BrowserLaunchError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
