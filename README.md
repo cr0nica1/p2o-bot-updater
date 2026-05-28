@@ -84,7 +84,13 @@ python -m venv .venv
 . .venv/bin/activate
 ```
 
-Install the package with development dependencies:
+Install runtime dependencies from `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
+
+For development, install the package with development dependencies:
 
 ```bash
 pip install -e ".[dev]"
