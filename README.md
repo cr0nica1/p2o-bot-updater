@@ -1,33 +1,81 @@
 # Pwn2Own Target Updater
 
-Pwn2Own Target Updater is a Discord bot for tracking vulnerability information for Pwn2Own targets.
+## Description
 
-It imports target/product data from a flexible CSV file, stores normalized data in MongoDB, and syncs vulnerability information from:
+Pwn2Own Target Updater is a Discord bot and CLI toolkit for tracking vulnerability and firmware information for Pwn2Own targets.
 
-- NIST NVD CVE API
-- ZDI advisory pages
+The project stores normalized target data in MongoDB, syncs vulnerability information from public sources, and exposes Discord slash commands for target management, vulnerability lookup, scheduled notifications, and firmware lookup. It supports target aliases for broader CVE/ZDI matching and vendor firmware configuration for products whose firmware can be discovered from vendor web pages.
 
-The bot runs as a long-lived Discord process and exposes slash commands for administration and querying.
+Main capabilities:
 
-## Features
+- Manage targets, aliases, vendors, categories, and vendor firmware aliases.
+- Import targets from CSV.
+- Sync vulnerabilities from NIST NVD and ZDI advisory pages.
+- Search and display stored vulnerabilities in Discord.
+- Schedule daily sync and notification jobs.
+- Configure vendor firmware lookup URLs and regexes.
+- Look up firmware versions from configured vendor pages.
+- Export stored vulnerability data to JSON.
 
-- Import targets from CSV via Discord
-- Support target aliases for better CVE/ZDI search coverage
-- Optionally store software or firmware version metadata
-- Sync vulnerability data from NVD and ZDI
-- Prefer CVE IDs when a ZDI advisory includes a CVE
-- Store data in MongoDB with upsert behavior to avoid duplicates
-- Scheduled automatic CVE/ZDI sync and notification
-- Export stored data to JSON
+## Architecture
 
-## Requirements
+The codebase follows a layered architecture:
+
+```text
+src/updater/
+├── domain/                  # Core models and repository protocols
+├── application/             # Use cases and business logic
+├── infrastructure/          # MongoDB, browser, CSV, and external source adapters
+├── presentation/
+│   └── discord_bot/         # Discord bot, slash commands, config, formatting
+└── cli/                     # CLI entry points for firmware/vendor tools
+```
+
+### Domain layer
+
+The domain layer defines core data models and repository interfaces:
+
+- `Target` — product or device tracked by the bot.
+- `Vulnerability` — CVE/ZDI advisory data.
+- `TargetVulnerability` — link between targets and vulnerabilities.
+- `VendorConfig` — firmware lookup settings for a vendor, including URL template, HTML element ID, and regex.
+
+### Application layer
+
+The application layer contains use cases:
+
+- Vulnerability sync from configured sources.
+- Target CSV import.
+- JSON export.
+- Firmware lookup using target vendor metadata and vendor firmware configuration.
+
+### Infrastructure layer
+
+The infrastructure layer implements external adapters:
+
+- MongoDB repositories for targets, vulnerabilities, links, versions, and vendor configs.
+- NVD and ZDI vulnerability sources.
+- CSV target loader.
+- Browser adapter for firmware page scraping with Playwright.
+
+### Presentation layer
+
+The presentation layer exposes functionality through Discord slash commands and CLI tools:
+
+- Discord bot commands for target management, vulnerability sync/search, scheduling, vendor firmware config, and firmware lookup.
+- CLI commands for vendor config management and firmware lookup.
+
+## Installation
+
+### Requirements
 
 - Python 3.10+
 - MongoDB running locally or remotely
-- Internet access for NVD/ZDI sync
-- A Discord bot application with the **Server Members Intent** enabled
+- Internet access for vulnerability sync and firmware lookup
+- Discord bot application with the **Server Members Intent** enabled
+- Playwright Chromium installed for firmware lookup
 
-## Setup
+### Setup
 
 Create and activate a virtual environment:
 
@@ -42,140 +90,140 @@ Install the package with development dependencies:
 pip install -e ".[dev]"
 ```
 
+Install Playwright browser dependencies for firmware lookup:
+
+```bash
+playwright install chromium
+```
+
 Copy the example environment file and fill in your values:
 
 ```bash
 cp .env.example .env
 ```
 
-The bot requires `.env` to exist with valid values for:
+Required environment values:
 
-- `DISCORD_TOKEN` — bot token from the Discord Developer Portal
-- `DISCORD_GUILD_ID` — server ID where the bot operates
-- `DISCORD_CHANNEL_ID` — channel ID for scheduled notifications
-- `DISCORD_ADMIN_ROLE_ID` — role ID that can run admin-only commands
-- `SYNC_TIME` — daily CVE sync time in `HH:MM` using `TIMEZONE`
-- `NOTIFY_TIME` — daily notification time in `HH:MM` using `TIMEZONE`
-- `TIMEZONE` — timezone for scheduled times and "today" filters; defaults to `UTC+7`
-- `MONGODB_URI` — MongoDB connection string
-- `MONGODB_DATABASE` — MongoDB database name
-
-### Server Members Intent
-
-The bot sets `intents.members = True`, so you must enable the privileged **Server Members Intent** for the bot application in the Discord Developer Portal under **Bot > Privileged Gateway Intents**.
-
-## Running the bot
-
-```bash
-updater-bot
+```text
+DISCORD_TOKEN=...
+DISCORD_GUILD_ID=...
+DISCORD_CHANNEL_ID=...
+DISCORD_ADMIN_ROLE_ID=...
+SYNC_TIME=09:00
+NOTIFY_TIME=09:15
+TIMEZONE=UTC+7
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=pwn2own_updater
 ```
 
-The bot connects to Discord, registers slash commands, and starts the scheduler.
+Run tests:
 
-## Slash commands
+```bash
+python -m pytest -q
+```
 
-| Command | Permission | Description |
-| --- | --- | --- |
-| `/import-targets` | Admin | Import targets from a CSV attachment |
-| `/add-target` | Admin | Add a single target |
-| `/remove-target` | Admin | Remove a target |
-| `/clear-database confirm: DELETE` | Admin | Clear all targets, versions, vulnerabilities, and links |
-| `/show-target <name>` | Open | Show details for a named target |
-| `/list-targets` | Open | List all imported targets |
-| `/search-vulns [year] [from_date] [to_date]` | Open | Search stored vulnerabilities by advisory/published year and collection date range. If no dates are supplied, defaults to vulnerabilities stored today. Dates use `YYYY-MM-DD`. |
-| `/add-vuln` | Admin | Manually add a vulnerability |
-| `/sync-cves [target]` | Admin | Sync CVE/ZDI data and return an ephemeral result |
-| `/set-schedule <sync_time> <notify_time>` | Admin | Change the daily sync and notification times |
-| `/show-schedule` | Open | Show the current schedule |
+## Usage
 
-Read-only commands (`/show-target`, `/list-targets`, `/search-vulns`, and `/show-schedule`) are open to all server members. All other commands require the admin role configured with `DISCORD_ADMIN_ROLE_ID`.
+### Start the Discord bot
 
-## Firmware lookup prototype CLI
+```bash
+updater-bot --env .env
+```
 
-The firmware lookup prototype is CLI-only. It resolves a target by the same numbered ID shown by `/list-targets`, uses `Target.vendor_alias` as the vendor-defined product slug, and uses a per-vendor crawler config to fetch and parse the vendor firmware page.
+The bot syncs slash commands to the configured Discord guild on startup.
 
-Add or update a vendor crawler config:
+### Discord commands
+
+Target management:
+
+```text
+/list-targets
+/show-target target_id:<number>
+/add-target name:<name> aliases:<semicolon-separated> vendor:<vendor> vendor_alias:<alias> category:<category>
+/remove-target names:<comma-separated names>
+/import-targets file:<csv attachment>
+/clear-database confirm:DELETE
+```
+
+Vulnerability management:
+
+```text
+/add-vuln advisory_id:<id> description:<text> cvss_score:<score> severity:<severity> references:<urls> target_name:<target>
+/sync-cves target:<optional target name>
+/search-vulns severity:<optional> year:<optional> from_date:<YYYY-MM-DD> to_date:<YYYY-MM-DD>
+```
+
+Scheduling:
+
+```text
+/set-schedule sync_time:<HH:MM> notify_time:<HH:MM>
+/show-schedule
+```
+
+Vendor firmware configuration and lookup:
+
+```text
+/set-vendor-firmware vendor:<vendor> url_template:<https url with {alias}> attr_id:<html element id> regex:<version/download regex>
+/import-vendor-firmware file:<csv attachment>
+/set-vendor-alias target_id:<number> vendor_alias:<alias>
+/lookup-firmware target_id:<number> url_template:<optional> attr_id:<optional> regex:<optional>
+```
+
+Firmware lookup uses the target's `vendor` to find a saved vendor firmware config and the target's `vendor_alias` to render the vendor URL. If a target has no vendor, no vendor alias, no saved vendor config, a mismatched URL/regex, or unsupported firmware lookup, the bot returns no firmware information.
+
+### Vendor firmware CSV format
+
+Bulk vendor firmware import expects these columns:
+
+```csv
+vendor,url_template,attr_id,regex
+Canon,https://example.com/{alias}/firmware,downloads,(v[\d.]+).*(https://[^"']+)
+```
+
+Rules:
+
+- `url_template` must use HTTPS.
+- `url_template` must contain `{alias}`.
+- `attr_id` is the HTML element ID to scrape.
+- `regex` must contain at least two capture groups:
+  - group 1: firmware version
+  - group 2: firmware download URL
+
+### CLI tools
+
+Manage saved vendor firmware configs:
 
 ```bash
 vendor-config add \
-  --vendor "Canon" \
-  --url-template "https://vendor.example/downloads/{alias}/firmware" \
-  --attr-id "firmware" \
-  --regex "Version ([^<]+).*href=\"([^\"]+)\""
+  --vendor Canon \
+  --url-template 'https://example.com/{alias}/firmware' \
+  --attr-id downloads \
+  --regex '(v[\d.]+).*(https://[^"'"']+)'
+
+vendor-config list
+vendor-config remove --vendor Canon
 ```
 
-Run a lookup:
+Look up firmware for a target using saved vendor config:
 
 ```bash
-firmware-lookup --target-id 2
+firmware-lookup --target-id 1
 ```
 
-Regex capture group 1 is the firmware version. Capture group 2 is the firmware download URL. Vendor URL templates must use HTTPS and contain `{alias}`.
+Test firmware lookup with runtime URL/regex inputs:
 
-## Target CSV format
-
-The CSV input is intentionally flexible so users can edit it manually.
-
-Required column:
-
-- `name`
-
-Optional columns:
-
-- `aliases` — semicolon-separated alternative names
-- `vendor`
-- `vendor_alias` — vendor-defined product slug/model identifier used by firmware lookup URL templates
-- `category`
-- `version`
-- `version_type` — for example `software` or `firmware`
-- `release_date`
-- `source_url`
-
-Unknown extra columns are preserved as raw metadata when they contain values.
-
-Minimal example:
-
-```csv
-name
-Adobe Acrobat Reader
-VMware Workstation
+```bash
+firmware-lookup \
+  --target-id 1 \
+  --url-template 'https://example.com/{alias}/firmware' \
+  --attr-id downloads \
+  --regex '(v[\d.]+).*(https://[^"'"']+)'
 ```
 
-Example with aliases and version metadata:
-
-```csv
-name,aliases,vendor,vendor_alias,category,version,version_type
-Adobe Acrobat Reader,Acrobat Reader;Adobe Reader,Adobe,acrobat-reader,document reader,2024.005.20320,software
-VMware Workstation,VMware Workstation Pro;Workstation,VMware,workstation-pro,virtualization,,
-```
-
-A sample file is included at:
-
-```text
-samples/targets.csv
-```
-
-## Data model overview
-
-The bot stores four main MongoDB collections:
-
-- `targets` — canonical target/product/model identities
-- `target_versions` — optional software or firmware versions for each target
-- `vulnerabilities` — normalized CVE/ZDI vulnerability records
-- `target_vulnerabilities` — links between targets and vulnerabilities, including matched aliases and source evidence
-
-Duplicate prevention is handled with MongoDB indexes and upsert operations.
-
-## Testing
+### Development
 
 Run the full test suite:
 
 ```bash
-pytest -q
+python -m pytest -q
 ```
-
-## Notes
-
-- MongoDB must be running before starting the bot.
-- NVD/ZDI sync commands require network access.
-- ZDI does not provide the same stable API shape as NVD, so its scraper may need updates if the website layout changes.
