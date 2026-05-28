@@ -12,11 +12,13 @@ from discord.ext import tasks
 
 from updater.application.export_json import ExportService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
+from updater.infrastructure.browser.cloak import CloakBrowserAdapter
 from updater.infrastructure.mongo import (
     MongoDatabase,
     MongoTargetRepository,
     MongoTargetVersionRepository,
     MongoTargetVulnerabilityRepository,
+    MongoVendorConfigRepository,
     MongoVulnerabilityRepository,
 )
 from updater.infrastructure.sources.nvd import NvdSource
@@ -142,6 +144,7 @@ def build_client(config: BotConfig) -> discord.Client:
         name="Target name",
         aliases="Semicolon-separated aliases",
         vendor="Vendor",
+        vendor_alias="URL path segment for firmware lookup",
         category="Category",
     )
     async def add_target(
@@ -149,6 +152,7 @@ def build_client(config: BotConfig) -> discord.Client:
         name: str,
         aliases: str | None = None,
         vendor: str | None = None,
+        vendor_alias: str | None = None,
         category: str | None = None,
     ):
         if not await _admin_only(interaction):
@@ -157,7 +161,7 @@ def build_client(config: BotConfig) -> discord.Client:
         await _reply(
             interaction,
             await cmd.handle_add_target(
-                services, name=name, aliases=alias_list, vendor=vendor, category=category
+                services, name=name, aliases=alias_list, vendor=vendor, vendor_alias=vendor_alias, category=category
             ),
         )
 
@@ -218,6 +222,76 @@ def build_client(config: BotConfig) -> discord.Client:
                 target_name=target_name,
             ),
         )
+
+    @tree.command(name="set-vendor-firmware", description="Set vendor firmware lookup config", guild=guild)
+    @app_commands.describe(
+        vendor="Vendor name",
+        url_template="HTTPS URL with {alias} placeholder",
+        attr_id="HTML element ID to scrape",
+        regex="Regex with 2+ groups (version, download URL)",
+    )
+    async def set_vendor_firmware(
+        interaction: discord.Interaction,
+        vendor: str,
+        url_template: str,
+        attr_id: str,
+        regex: str,
+    ):
+        if not await _admin_only(interaction):
+            return
+        await _reply(
+            interaction,
+            await cmd.handle_set_vendor_firmware(
+                services, vendor=vendor, url_template=url_template, attr_id=attr_id, regex=regex
+            ),
+        )
+
+    @tree.command(name="set-vendor-alias", description="Set vendor alias for firmware lookup", guild=guild)
+    @app_commands.describe(
+        target_id="Target number from /list-targets",
+        vendor_alias="URL path segment for vendor firmware page",
+    )
+    async def set_vendor_alias(
+        interaction: discord.Interaction,
+        target_id: int,
+        vendor_alias: str,
+    ):
+        if not await _admin_only(interaction):
+            return
+        await _reply(
+            interaction,
+            await cmd.handle_set_vendor_alias(services, target_id=target_id, vendor_alias=vendor_alias),
+        )
+
+    @tree.command(name="lookup-firmware", description="Look up firmware version for a target", guild=guild)
+    @app_commands.describe(
+        target_id="Target number from /list-targets",
+        url_template="Optional: override stored URL template",
+        attr_id="Optional: override stored element ID",
+        regex="Optional: override stored regex",
+    )
+    async def lookup_firmware(
+        interaction: discord.Interaction,
+        target_id: int,
+        url_template: str | None = None,
+        attr_id: str | None = None,
+        regex: str | None = None,
+    ):
+        await _reply(
+            interaction,
+            await cmd.handle_lookup_firmware(
+                services, target_id=target_id, url_template=url_template, attr_id=attr_id, regex=regex
+            ),
+        )
+
+    @tree.command(name="import-vendor-firmware", description="Import vendor firmware configs from CSV", guild=guild)
+    async def import_vendor_firmware(interaction: discord.Interaction, file: discord.Attachment):
+        if not await _admin_only(interaction):
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        data = await file.read()
+        result = await cmd.handle_import_vendor_firmware(services, csv_bytes=data)
+        await interaction.followup.send(content=result.text, ephemeral=True)
 
     @tree.command(name="sync-cves", description="Sync vulnerabilities now", guild=guild)
     @app_commands.describe(target="Optional target name; omit to sync all")
@@ -361,6 +435,8 @@ def _build_services(config: BotConfig) -> cmd.Services:
         vulnerability_repo=MongoVulnerabilityRepository(db.db),
         target_vulnerability_repo=MongoTargetVulnerabilityRepository(db.db),
         sources=[NvdSource(), ZdiSource()],
+        vendor_config_repo=MongoVendorConfigRepository(db.db),
+        browser=CloakBrowserAdapter(),
     )
 
 
