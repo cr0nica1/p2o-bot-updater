@@ -78,17 +78,24 @@ def _vulnerability_lookup(vulnerabilities: list[Vulnerability]) -> dict[str, Vul
     return lookup
 
 
+def _as_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def filter_findings_to_created_since(
     findings: list[dict[str, Any]],
     vulnerabilities: list[Vulnerability],
     sync_started_at: datetime,
 ) -> list[dict[str, Any]]:
     vulnerabilities_by_id = _vulnerability_lookup(vulnerabilities)
+    sync_started_at_utc = _as_utc_datetime(sync_started_at)
     return [
         finding
         for finding in findings
         if (vulnerability := vulnerabilities_by_id.get(finding.get("advisory_id", ""))) is not None
-        and vulnerability.created_at >= sync_started_at
+        and _as_utc_datetime(vulnerability.created_at) >= sync_started_at_utc
     ]
 
 

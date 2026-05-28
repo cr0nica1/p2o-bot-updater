@@ -546,6 +546,32 @@ def test_filter_findings_to_created_since_keeps_only_new_vulnerabilities():
     assert [finding["advisory_id"] for finding in filtered] == ["CVE-2024-0002"]
 
 
+def test_filter_findings_to_created_since_handles_mongo_naive_utc_datetimes():
+    from updater.presentation.discord_bot.commands import filter_findings_to_created_since
+
+    sync_started_at = datetime(2026, 5, 21, 13, 34, 0, tzinfo=timezone.utc)
+    old = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        created_at=datetime(2026, 5, 21, 12, 0),
+    )
+    fresh = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        created_at=datetime(2026, 5, 21, 13, 34, 30),
+    )
+    findings = [
+        {"advisory_id": "CVE-2024-0001", "target_names": ["Canon"]},
+        {"advisory_id": "CVE-2024-0002", "target_names": ["Canon"]},
+    ]
+
+    filtered = filter_findings_to_created_since(
+        findings,
+        [old, fresh],
+        sync_started_at,
+    )
+
+    assert [finding["advisory_id"] for finding in filtered] == ["CVE-2024-0002"]
+
+
 async def test_sync_cves_only_reports_vulnerabilities_stored_since_sync_minute():
     from unittest.mock import patch
 
