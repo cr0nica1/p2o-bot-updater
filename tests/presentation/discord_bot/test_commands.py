@@ -459,6 +459,32 @@ async def test_sync_cves_unknown_target_returns_not_found():
     assert result.embeds == []
 
 
+def test_filter_findings_to_created_since_keeps_only_new_vulnerabilities():
+    from updater.presentation.discord_bot.commands import filter_findings_to_created_since
+
+    sync_started_at = datetime(2026, 5, 21, 13, 34, 0, tzinfo=timezone.utc)
+    old = Vulnerability(
+        advisory_id="CVE-2024-0001",
+        created_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    fresh = Vulnerability(
+        advisory_id="CVE-2024-0002",
+        created_at=datetime(2026, 5, 21, 13, 34, 30, tzinfo=timezone.utc),
+    )
+    findings = [
+        {"advisory_id": "CVE-2024-0001", "target_names": ["Canon"]},
+        {"advisory_id": "CVE-2024-0002", "target_names": ["Canon"]},
+    ]
+
+    filtered = filter_findings_to_created_since(
+        findings,
+        [old, fresh],
+        sync_started_at,
+    )
+
+    assert [finding["advisory_id"] for finding in filtered] == ["CVE-2024-0002"]
+
+
 async def test_sync_cves_only_reports_vulnerabilities_stored_since_sync_minute():
     from unittest.mock import patch
 
@@ -1058,3 +1084,77 @@ async def test_send_command_result_keeps_each_message_under_embed_total_limit():
     for call in calls:
         total = sum(len(embed.title or "") + len(embed.description or "") for embed in call["embeds"])
         assert total <= 6000
+
+
+async def test_run_notify_only_sends_vulnerabilities_created_since_sync_start():
+    from unittest.mock import patch
+
+    from updater.presentation.discord_bot.bot import _run_notify
+
+    old = Vulnerability(
+        id="old-vuln",
+        advisory_id="CVE-2024-0001",
+        severity="LOW",
+        description="old bug already in db",
+        created_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    fresh = Vulnerability(
+        id="fresh-vuln",
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        description="new bug from this sync",
+        created_at=datetime(2026, 5, 21, 13, 34, 30, tzinfo=timezone.utc),
+    )
+    target = Target(id="t1", name="Canon")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vuln_repo=FakeVulnRepo([old, fresh]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="old-vuln"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="fresh-vuln"),
+        ]),
+    )
+    sent = []
+
+    class FakeChannel:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    fake_now = datetime(2026, 5, 21, 14, 0, 0, tzinfo=timezone.utc)
+    with patch("updater.presentation.discord_bot.bot.datetime") as mock_dt:
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        await _run_notify(
+            services,
+            FakeChannel(),
+            timezone.utc,
+            sync_started_at=datetime(2026, 5, 21, 13, 34, 0, tzinfo=timezone.utc),
+        )
+
+    assert sent[0]["content"] == (
+        "Daily Vulnerability Report — 2026-05-21\n"
+        "Targets processed: 1\n"
+        "New findings: 1\n"
+        "Errors: 0"
+    )
+    assert len(sent) == 2
+    assert sent[1]["embed"].title == "CVE-2024-0002"
+
+
+async def test_run_sync_returns_sync_start_timestamp():
+    from unittest.mock import patch
+
+    from updater.presentation.discord_bot.bot import _run_sync
+
+    target = Target(id="t1", name="Canon")
+    services = _services(target_repo=FakeTargetRepo([target]), sources=[])
+    sync_start = datetime(2026, 5, 21, 13, 34, 30, tzinfo=timezone.utc)
+
+    with patch("updater.presentation.discord_bot.bot.datetime") as mock_dt:
+        mock_dt.now.return_value = sync_start
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        result = await _run_sync(services)
+
+    assert result is not None
+    assert result.sync_started_at == sync_start
+    assert result.sync_result.targets_processed == 1

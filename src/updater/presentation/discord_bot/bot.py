@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,6 +94,12 @@ def _local_to_utc(local_hour: int, local_minute: int, tz) -> tuple[int, int]:
 
 async def _resolve_channel(client, channel_id: int):
     return client.get_channel(channel_id) or await client.fetch_channel(channel_id)
+
+
+@dataclass
+class ScheduledSyncRun:
+    sync_started_at: datetime
+    sync_result: object
 
 
 def build_client(config: BotConfig) -> discord.Client:
@@ -324,9 +331,10 @@ def build_client(config: BotConfig) -> discord.Client:
                 sync_time=_local_to_utc(*current.sync_time, current.tz),
                 notify_time=_local_to_utc(*current.notify_time, current.tz),
             )
+            sync_run = None
             for event in events:
                 if event == "sync":
-                    await _run_sync(services)
+                    sync_run = await _run_sync(services)
                 elif event == "notify":
                     try:
                         channel = await _resolve_channel(client, config.channel_id)
@@ -339,7 +347,12 @@ def build_client(config: BotConfig) -> discord.Client:
                     except discord.HTTPException as exc:
                         log.warning("notify channel %s fetch failed (status=%s text=%s), skipping tick", config.channel_id, exc.status, exc.text)
                         continue
-                    await _run_notify(services, channel, current.tz)
+                    await _run_notify(
+                        services,
+                        channel,
+                        current.tz,
+                        sync_started_at=sync_run.sync_started_at if sync_run is not None else None,
+                    )
         except Exception:
             log.exception("scheduler tick failed")
 
@@ -364,8 +377,9 @@ def _build_services(config: BotConfig) -> cmd.Services:
     )
 
 
-async def _run_sync(services: cmd.Services) -> None:
+async def _run_sync(services: cmd.Services) -> ScheduledSyncRun | None:
     log.info("scheduled sync starting")
+    sync_started_at = datetime.now(timezone.utc)
     try:
         result = await asyncio.to_thread(
             SyncVulnerabilitiesService(
@@ -381,13 +395,16 @@ async def _run_sync(services: cmd.Services) -> None:
             result.vulnerabilities_seen,
             len(result.errors),
         )
+        return ScheduledSyncRun(sync_started_at=sync_started_at, sync_result=result)
     except Exception:
         log.exception("scheduled sync failed")
+        return None
 
 
-async def _run_notify(services: cmd.Services, channel, tz) -> None:
+async def _run_notify(services: cmd.Services, channel, tz, *, sync_started_at: datetime | None = None) -> None:
     log.info("scheduled notify starting")
     try:
+        vulnerabilities = await asyncio.to_thread(services.vulnerability_repo.list_all)
         snapshot = await asyncio.to_thread(
             ExportService(
                 services.target_repo,
@@ -400,6 +417,8 @@ async def _run_notify(services: cmd.Services, channel, tz) -> None:
         return
 
     findings = group_findings(snapshot)
+    if sync_started_at is not None:
+        findings = cmd.filter_findings_to_created_since(findings, vulnerabilities, sync_started_at)
     summary = build_summary_message(
         report_date=datetime.now(tz).date(),
         targets_processed=len(services.target_repo.list_all()),

@@ -67,6 +67,20 @@ def _vulnerability_lookup(vulnerabilities: list[Vulnerability]) -> dict[str, Vul
     return lookup
 
 
+def filter_findings_to_created_since(
+    findings: list[dict[str, Any]],
+    vulnerabilities: list[Vulnerability],
+    sync_started_at: datetime,
+) -> list[dict[str, Any]]:
+    vulnerabilities_by_id = _vulnerability_lookup(vulnerabilities)
+    return [
+        finding
+        for finding in findings
+        if (vulnerability := vulnerabilities_by_id.get(finding.get("advisory_id", ""))) is not None
+        and vulnerability.created_at >= sync_started_at
+    ]
+
+
 def _vulnerability_sort_time(vulnerability: Vulnerability) -> datetime:
     return vulnerability.published_date or vulnerability.created_at
 
@@ -366,7 +380,7 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
     )
     result = await asyncio.to_thread(sync.sync_one, target_name) if target_name else await asyncio.to_thread(sync.sync_all)
 
-    vulnerabilities_by_id = _vulnerability_lookup(await asyncio.to_thread(services.vulnerability_repo.list_all))
+    vulnerabilities = await asyncio.to_thread(services.vulnerability_repo.list_all)
     snapshot = await asyncio.to_thread(
         ExportService(
             services.target_repo,
@@ -380,12 +394,7 @@ async def handle_sync_cves(services: Services, *, target_name: str | None) -> Co
         findings = [
             f for f in findings if target_name.strip().lower() in [t.lower() for t in f["target_names"]]
         ]
-    findings = [
-        finding
-        for finding in findings
-        if (vulnerability := vulnerabilities_by_id.get(finding.get("advisory_id", ""))) is not None
-        and vulnerability.created_at >= sync_started_at
-    ]
+    findings = filter_findings_to_created_since(findings, vulnerabilities, sync_started_at)
 
     summary = (
         f"Sync complete. targets_processed={result.targets_processed} "
