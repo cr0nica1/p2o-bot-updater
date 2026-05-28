@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from updater.domain.models import Target, TargetVulnerability, Vulnerability
+from updater.domain.models import Target, TargetVulnerability, VendorConfig, Vulnerability
 from updater.presentation.discord_bot.commands import (
     CommandResult,
     Services,
@@ -8,10 +8,14 @@ from updater.presentation.discord_bot.commands import (
     handle_add_vuln,
     handle_clear_database,
     handle_import_targets,
+    handle_import_vendor_firmware,
     handle_list_targets,
+    handle_lookup_firmware,
     handle_remove_target,
     handle_search_vulns,
     handle_set_schedule,
+    handle_set_vendor_alias,
+    handle_set_vendor_firmware,
     handle_show_schedule,
     handle_show_target,
     handle_sync_cves,
@@ -110,14 +114,58 @@ class FakeLinkRepo:
         return deleted
 
 
-def _services(target_repo=None, vuln_repo=None, link_repo=None, version_repo=None, sources=None):
+class FakeVendorConfigRepo:
+    def __init__(self, configs=None):
+        self.configs = {c.vendor: c for c in (configs or [])}
+
+    def upsert(self, config):
+        self.configs[config.vendor] = config
+        return config
+
+    def find_by_vendor(self, vendor):
+        from updater.domain.models import normalize_name
+        norm = normalize_name(vendor)
+        return next((c for c in self.configs.values() if c.normalized_vendor == norm), None)
+
+    def list_all(self):
+        return list(self.configs.values())
+
+    def delete(self, vendor):
+        from updater.domain.models import normalize_name
+        norm = normalize_name(vendor)
+        for key in list(self.configs):
+            if normalize_name(key) == norm:
+                del self.configs[key]
+                return True
+        return False
+
+
+class FakeBrowserAdapter:
+    def __init__(self, html="<span>v1.0</span><a href='https://example.com/fw.bin'>download</a>"):
+        self.html = html
+        self.calls = []
+
+    def fetch_element_html(self, url, element_id):
+        self.calls.append({"url": url, "element_id": element_id})
+        return self.html
+
+
+def _services(target_repo=None, vuln_repo=None, link_repo=None, version_repo=None, sources=None, vendor_config_repo=None, browser=None):
     return Services(
         target_repo=target_repo or FakeTargetRepo(),
         version_repo=version_repo or FakeVersionRepo(),
         vulnerability_repo=vuln_repo or FakeVulnRepo(),
         target_vulnerability_repo=link_repo or FakeLinkRepo(),
         sources=sources or [],
+        vendor_config_repo=vendor_config_repo or FakeVendorConfigRepo(),
+        browser=browser or FakeBrowserAdapter(),
     )
+
+
+def test_services_includes_vendor_config_repo_and_browser():
+    services = _services()
+    assert services.vendor_config_repo is not None
+    assert services.browser is not None
 
 
 async def test_list_targets_empty():
@@ -240,6 +288,19 @@ async def test_add_target_creates_target():
     assert saved[0].aliases == ["Acrobat"]
     assert saved[0].vendor == "Adobe"
     assert saved[0].category == "pdf"
+
+
+async def test_add_target_accepts_vendor_alias():
+    services = _services()
+    result = await handle_add_target(
+        services,
+        name="Canon MF654Cdw",
+        vendor="Canon",
+        vendor_alias="canon-mf654cdw",
+    )
+    assert "Canon MF654Cdw" in result.text
+    target = services.target_repo.find_by_name("Canon MF654Cdw")
+    assert target.vendor_alias == "canon-mf654cdw"
 
 
 async def test_remove_target_removes_target_and_links():
@@ -1158,3 +1219,158 @@ async def test_run_sync_returns_sync_start_timestamp():
     assert result is not None
     assert result.sync_started_at == sync_start
     assert result.sync_result.targets_processed == 1
+async def test_lookup_firmware_uses_stored_vendor_config():
+    target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon", vendor_alias="canon-mf654cdw")
+    config = VendorConfig(
+        vendor="Canon",
+        url_template="https://example.com/{alias}/fw",
+        attr_id="downloads",
+        regex=r"version:([\d.]+).*href=[\"']([^\"']+)",
+    )
+    browser = FakeBrowserAdapter(html='version:2.1.0 <a href="https://example.com/fw.bin">download</a>')
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        browser=browser,
+    )
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert "Canon MF654Cdw" in result.text
+    assert "2.1.0" in result.text
+    assert "https://example.com/fw.bin" in result.text
+
+
+async def test_lookup_firmware_returns_no_info_when_no_vendor():
+    target = Target(id="t1", name="Some Target")
+    services = _services(target_repo=FakeTargetRepo([target]))
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert "No firmware information" in result.text
+
+
+async def test_lookup_firmware_returns_no_info_when_no_vendor_alias():
+    target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon")
+    services = _services(target_repo=FakeTargetRepo([target]))
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert "No firmware information" in result.text
+
+
+async def test_lookup_firmware_returns_no_info_when_no_config():
+    target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon", vendor_alias="canon-mf654cdw")
+    services = _services(target_repo=FakeTargetRepo([target]))
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert "No firmware information" in result.text
+
+
+async def test_lookup_firmware_returns_no_info_on_lookup_error():
+    target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon", vendor_alias="canon-mf654cdw")
+    config = VendorConfig(
+        vendor="Canon",
+        url_template="https://example.com/{alias}/fw",
+        attr_id="downloads",
+        regex=r"version:([\d.]+).*href=[\"']([^\"']+)",
+    )
+    browser = FakeBrowserAdapter(html="<p>no match</p>")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        browser=browser,
+    )
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert "No firmware information" in result.text
+
+
+async def test_lookup_firmware_with_runtime_inputs():
+    target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon", vendor_alias="canon-mf654cdw")
+    browser = FakeBrowserAdapter(html='version:3.0.0 <a href="https://example.com/fw3.bin">download</a>')
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        browser=browser,
+    )
+    result = await handle_lookup_firmware(
+        services,
+        target_id=1,
+        url_template="https://example.com/{alias}/fw",
+        attr_id="downloads",
+        regex=r"version:([\d.]+).*href=[\"']([^\"']+)",
+    )
+    assert "3.0.0" in result.text
+    assert "fw3.bin" in result.text
+
+
+async def test_set_vendor_alias_updates_target():
+    target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon")
+    services = _services(target_repo=FakeTargetRepo([target]))
+    result = await handle_set_vendor_alias(services, target_id=1, vendor_alias="canon-mf654cdw")
+    assert "canon-mf654cdw" in result.text
+    updated = services.target_repo.find_by_name("Canon MF654Cdw")
+    assert updated.vendor_alias == "canon-mf654cdw"
+
+
+async def test_set_vendor_alias_rejects_invalid_target_id():
+    services = _services()
+    result = await handle_set_vendor_alias(services, target_id=1, vendor_alias="test")
+    assert "Invalid target ID" in result.text
+
+
+async def test_import_vendor_firmware_imports_csv():
+    csv_data = (
+        "vendor,url_template,attr_id,regex\n"
+        "Canon,https://example.com/{alias}/fw,downloads,(v[\\d.]+).*(https://[^\"']+)\n"
+        "TP-Link,https://tplink.com/{alias}/fw,content,(v[\\d.]+).*(https://[^\"']+)\n"
+    ).encode()
+    services = _services()
+    result = await handle_import_vendor_firmware(services, csv_bytes=csv_data)
+    assert "2" in result.text
+    assert services.vendor_config_repo.find_by_vendor("Canon") is not None
+    assert services.vendor_config_repo.find_by_vendor("TP-Link") is not None
+
+
+async def test_import_vendor_firmware_reports_invalid_rows():
+    csv_data = (
+        "vendor,url_template,attr_id,regex\n"
+        "Canon,https://example.com/{alias}/fw,downloads,(v[\\d.]+).*(https://[^\"']+)\n"
+        "BadVendor,http://no-alias.com/fw,downloads,(bad\n"
+    ).encode()
+    services = _services()
+    result = await handle_import_vendor_firmware(services, csv_bytes=csv_data)
+    assert "1" in result.text
+    assert services.vendor_config_repo.find_by_vendor("Canon") is not None
+    assert "BadVendor" in result.text
+
+
+async def test_set_vendor_firmware_creates_config():
+    services = _services()
+    result = await handle_set_vendor_firmware(
+        services,
+        vendor="Canon",
+        url_template="https://example.com/{alias}/firmware",
+        attr_id="downloads",
+        regex=r"(v[\d.]+).*(https://[^\"']+)",
+    )
+    assert "Canon" in result.text
+    saved = services.vendor_config_repo.find_by_vendor("Canon")
+    assert saved is not None
+    assert saved.url_template == "https://example.com/{alias}/firmware"
+
+
+async def test_set_vendor_firmware_rejects_invalid_regex():
+    services = _services()
+    result = await handle_set_vendor_firmware(
+        services,
+        vendor="Canon",
+        url_template="https://example.com/{alias}/firmware",
+        attr_id="downloads",
+        regex="[invalid(",
+    )
+    assert "invalid" in result.text.lower()
+
+
+async def test_set_vendor_firmware_rejects_missing_alias_placeholder():
+    services = _services()
+    result = await handle_set_vendor_firmware(
+        services,
+        vendor="Canon",
+        url_template="https://example.com/firmware",
+        attr_id="downloads",
+        regex=r"(v[\d.]+).*(https://[^\"']+)",
+    )
+    assert "{alias}" in result.text

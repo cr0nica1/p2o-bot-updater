@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -10,13 +12,20 @@ from typing import Any
 import discord
 
 from updater.application.export_json import ExportService
+from updater.application.firmware_lookup import (
+    BrowserAdapter,
+    FirmwareLookupError,
+    FirmwareLookupService,
+    validate_vendor_inputs,
+)
 from updater.application.import_targets import ImportTargetsService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
-from updater.domain.models import Target, TargetVulnerability, Vulnerability
+from updater.domain.models import Target, TargetVulnerability, VendorConfig, Vulnerability
 from updater.domain.repositories import (
     TargetRepository,
     TargetVersionRepository,
     TargetVulnerabilityRepository,
+    VendorConfigRepository,
     VulnerabilityRepository,
     VulnerabilitySource,
 )
@@ -42,6 +51,8 @@ class Services:
     vulnerability_repo: VulnerabilityRepository
     target_vulnerability_repo: TargetVulnerabilityRepository
     sources: list[VulnerabilitySource]
+    vendor_config_repo: VendorConfigRepository
+    browser: BrowserAdapter
 
 
 _CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
@@ -225,12 +236,14 @@ async def handle_add_target(
     name: str,
     aliases: list[str] | None = None,
     vendor: str | None = None,
+    vendor_alias: str | None = None,
     category: str | None = None,
 ) -> CommandResult:
     target = Target(
         name=name,
         aliases=list(aliases or []),
         vendor=vendor,
+        vendor_alias=vendor_alias,
         category=category,
     )
     services.target_repo.upsert(target)
@@ -366,6 +379,133 @@ async def handle_add_vuln(
         services.target_vulnerability_repo.upsert(link)
 
     return CommandResult(text=f"Added vulnerability: {advisory_id}")
+
+
+async def handle_lookup_firmware(
+    services: Services,
+    *,
+    target_id: int,
+    url_template: str | None = None,
+    attr_id: str | None = None,
+    regex: str | None = None,
+) -> CommandResult:
+    targets = _sorted_targets(services)
+    if target_id < 1 or target_id > len(targets):
+        return CommandResult(
+            text=f"Invalid target ID. Use /list-targets to see available targets (1-{len(targets)}).",
+            ephemeral=True,
+        )
+    target = targets[target_id - 1]
+
+    lookup = FirmwareLookupService(
+        services.target_repo,
+        services.vendor_config_repo,
+        services.browser,
+    )
+
+    runtime_inputs = all([url_template, attr_id, regex])
+    try:
+        if runtime_inputs:
+            result = await asyncio.to_thread(
+                lookup.lookup_with_inputs,
+                target_id=target_id,
+                url_template=url_template,
+                attr_id=attr_id,
+                regex=regex,
+            )
+        else:
+            result = await asyncio.to_thread(lookup.lookup, target_id)
+    except Exception:
+        return CommandResult(
+            text=f"No firmware information found for {target.name}.",
+            ephemeral=True,
+        )
+
+    lines = [
+        f"Firmware lookup: {result.target_name}",
+        f"Vendor: {result.vendor}",
+        f"URL: {result.resolved_url}",
+        f"Version: {result.version}",
+        f"Download: {result.download_url}",
+    ]
+    return CommandResult(text="\n".join(lines))
+
+
+async def handle_set_vendor_alias(
+    services: Services,
+    *,
+    target_id: int,
+    vendor_alias: str,
+) -> CommandResult:
+    targets = _sorted_targets(services)
+    if target_id < 1 or target_id > len(targets):
+        return CommandResult(
+            text=f"Invalid target ID. Use /list-targets to see available targets (1-{len(targets)}).",
+            ephemeral=True,
+        )
+    target = targets[target_id - 1]
+    target.vendor_alias = vendor_alias
+    services.target_repo.upsert(target)
+    return CommandResult(text=f"Vendor alias set: {target.name} → {vendor_alias}")
+
+
+async def handle_set_vendor_firmware(
+    services: Services,
+    *,
+    vendor: str,
+    url_template: str,
+    attr_id: str,
+    regex: str,
+) -> CommandResult:
+    try:
+        validate_vendor_inputs(url_template, regex)
+    except FirmwareLookupError as exc:
+        return CommandResult(text=str(exc), ephemeral=True)
+    config = VendorConfig(
+        vendor=vendor,
+        url_template=url_template,
+        attr_id=attr_id,
+        regex=regex,
+    )
+    services.vendor_config_repo.upsert(config)
+    return CommandResult(text=f"Vendor firmware config saved: {vendor}")
+
+
+async def handle_import_vendor_firmware(
+    services: Services,
+    *,
+    csv_bytes: bytes,
+) -> CommandResult:
+    text = csv_bytes.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    saved = 0
+    errors: list[str] = []
+    for row in reader:
+        vendor = row.get("vendor", "").strip()
+        url_template = row.get("url_template", "").strip()
+        attr_id = row.get("attr_id", "").strip()
+        regex = row.get("regex", "").strip()
+        if not all([vendor, url_template, attr_id, regex]):
+            errors.append(f"Row skipped (missing fields): {vendor or '<empty>'}")
+            continue
+        try:
+            validate_vendor_inputs(url_template, regex)
+        except FirmwareLookupError as exc:
+            errors.append(f"{vendor}: {exc}")
+            continue
+        config = VendorConfig(
+            vendor=vendor,
+            url_template=url_template,
+            attr_id=attr_id,
+            regex=regex,
+        )
+        services.vendor_config_repo.upsert(config)
+        saved += 1
+    lines = [f"Imported {saved} vendor firmware config(s)."]
+    if errors:
+        lines.append(f"Errors ({len(errors)}):")
+        lines.extend(f"  - {e}" for e in errors)
+    return CommandResult(text="\n".join(lines))
 
 
 async def handle_sync_cves(services: Services, *, target_name: str | None) -> CommandResult:
