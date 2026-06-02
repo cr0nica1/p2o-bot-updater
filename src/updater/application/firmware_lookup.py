@@ -54,11 +54,12 @@ def _render_url(template: str, vendor_alias: str) -> str:
 
 
 def _resolve_download_url(page_url: str, captured_url: str) -> str:
+    from urllib.parse import quote
     resolved = urljoin(page_url, captured_url.strip())
     parsed = urlparse(resolved)
     if parsed.scheme != "https":
         raise FirmwareLookupError("Captured download URL must be relative or HTTPS")
-    return resolved
+    return parsed._replace(path=quote(parsed.path, safe="/:%@!$&'()*+,;=-")).geturl()
 
 
 class FirmwareLookupService:

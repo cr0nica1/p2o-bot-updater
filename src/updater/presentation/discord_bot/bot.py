@@ -87,6 +87,30 @@ async def _send_command_result(send, result: cmd.CommandResult) -> None:
         )
 
 
+async def _reply_command_result(interaction, result: cmd.CommandResult, *, ephemeral: bool = False) -> None:
+    if not result.embeds:
+        await interaction.response.send_message(
+            content=result.text or None,
+            ephemeral=ephemeral,
+        )
+        return
+    chunks = _chunk_embeds(result.embeds, size=10)
+    await interaction.response.send_message(
+        content=f"{result.text} — showing 1-{len(chunks[0])} of {len(result.embeds)}",
+        embeds=chunks[0],
+        ephemeral=ephemeral,
+    )
+    shown = len(chunks[0])
+    for chunk in chunks[1:]:
+        start = shown + 1
+        shown += len(chunk)
+        await interaction.followup.send(
+            content=f"Showing {start}-{shown} of {len(result.embeds)}",
+            embeds=chunk,
+            ephemeral=ephemeral,
+        )
+
+
 def _local_to_utc(local_hour: int, local_minute: int, tz) -> tuple[int, int]:
     from datetime import datetime as _dt
     ref = _dt(2000, 1, 2, local_hour, local_minute, tzinfo=tz)
@@ -124,11 +148,7 @@ def build_client(config: BotConfig) -> discord.Client:
         return True
 
     async def _reply(interaction: discord.Interaction, result: cmd.CommandResult, *, ephemeral=False):
-        await interaction.response.send_message(
-            content=result.text or None,
-            embeds=result.embeds,
-            ephemeral=ephemeral,
-        )
+        await _reply_command_result(interaction, result, ephemeral=ephemeral)
 
     @tree.command(name="list-targets", description="List all targets", guild=guild)
     async def list_targets(interaction: discord.Interaction):

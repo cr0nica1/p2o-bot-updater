@@ -1152,6 +1152,41 @@ async def test_send_command_result_sends_text_when_no_embeds():
     assert calls == [{"content": "No findings"}]
 
 
+async def test_reply_command_result_batches_interaction_embeds():
+    import discord
+
+    from updater.presentation.discord_bot.bot import _reply_command_result
+    from updater.presentation.discord_bot.commands import CommandResult
+
+    response_calls = []
+    followup_calls = []
+
+    class FakeResponse:
+        async def send_message(self, **kwargs):
+            if len(kwargs.get("embeds", [])) > 10:
+                raise ValueError("embeds has a maximum of 10 elements.")
+            response_calls.append(kwargs)
+
+    class FakeFollowup:
+        async def send(self, **kwargs):
+            if len(kwargs.get("embeds", [])) > 10:
+                raise ValueError("embeds has a maximum of 10 elements.")
+            followup_calls.append(kwargs)
+
+    class FakeInteraction:
+        response = FakeResponse()
+        followup = FakeFollowup()
+
+    embeds = [discord.Embed(title=f"Finding {index}") for index in range(11)]
+
+    await _reply_command_result(FakeInteraction(), CommandResult(text="Target details", embeds=embeds))
+
+    assert response_calls[0]["content"] == "Target details — showing 1-10 of 11"
+    assert len(response_calls[0]["embeds"]) == 10
+    assert followup_calls[0]["content"] == "Showing 11-11 of 11"
+    assert len(followup_calls[0]["embeds"]) == 1
+
+
 async def test_send_command_result_keeps_each_message_under_embed_total_limit():
     import discord
 
