@@ -179,6 +179,75 @@ def test_normalize_nvd_prefers_nist_cvss_over_third_party():
     assert len(vulnerability.raw["nvd"]["cve"]["metrics"]["cvssMetricV31"]) == 1
 
 
+def test_normalize_nvd_falls_back_to_cna_when_nist_absent():
+    raw = {
+        "cve": {
+            "id": "CVE-2026-54592",
+            "published": "2026-07-10T00:00:00.000",
+            "descriptions": [{"lang": "en", "value": "CNA-only advisory"}],
+            "references": [],
+            "metrics": {
+                "cvssMetricV31": [
+                    {
+                        "source": "security-advisories@github.com",
+                        "type": "Secondary",
+                        "cvssData": {"baseScore": 7.5, "baseSeverity": "HIGH"},
+                    }
+                ],
+            },
+        }
+    }
+
+    vulnerability = normalize_nvd_item(raw)
+
+    assert vulnerability.cvss_score == 7.5
+    assert vulnerability.severity == "high"
+    # CNA metrics are preserved in raw as the fallback source of truth.
+    assert vulnerability.raw["nvd"]["cve"]["metrics"]["cvssMetricV31"][0]["source"] == "security-advisories@github.com"
+
+
+def test_normalize_nvd_reads_cvss_v40_cna_score():
+    raw = {
+        "cve": {
+            "id": "CVE-2026-54502",
+            "published": "2026-07-10T00:00:00.000",
+            "descriptions": [{"lang": "en", "value": "CVSS v4.0 advisory"}],
+            "references": [],
+            "metrics": {
+                "cvssMetricV40": [
+                    {
+                        "source": "security-advisories@github.com",
+                        "type": "Secondary",
+                        "cvssData": {"version": "4.0", "baseScore": 6.3, "baseSeverity": "MEDIUM"},
+                    }
+                ],
+            },
+        }
+    }
+
+    vulnerability = normalize_nvd_item(raw)
+
+    assert vulnerability.cvss_score == 6.3
+    assert vulnerability.severity == "medium"
+
+
+def test_strip_keeps_cna_metrics_when_no_nist_score():
+    raw = {
+        "cve": {
+            "id": "CVE-2026-54592",
+            "metrics": {
+                "cvssMetricV31": [
+                    {"source": "security-advisories@github.com", "cvssData": {"baseScore": 7.5, "baseSeverity": "HIGH"}, "type": "Secondary"},
+                ],
+            },
+        }
+    }
+
+    cleaned = strip_non_nist_cvss_metrics(raw)
+
+    assert cleaned["cve"]["metrics"]["cvssMetricV31"][0]["source"] == "security-advisories@github.com"
+
+
 def test_strip_non_english_descriptions_from_raw():
     raw = {
         "cve": {

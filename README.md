@@ -102,6 +102,52 @@ Install Playwright browser dependencies for firmware lookup:
 playwright install chromium
 ```
 
+### Set up MongoDB
+
+The bot stores all target and vulnerability data in MongoDB. You need a running
+MongoDB instance before starting the bot or the tests that touch the database.
+
+Choose one of the options below.
+
+**Option A — Docker (recommended for local development):**
+
+```bash
+docker run -d --name pwn2own-mongo -p 27017:27017 \
+  -v pwn2own-mongo-data:/data/db \
+  mongo:7
+```
+
+This starts MongoDB on `localhost:27017` with a persistent named volume so data
+survives container restarts. Stop and start it later with
+`docker stop pwn2own-mongo` / `docker start pwn2own-mongo`.
+
+**Option B — Native install (Ubuntu/Debian):**
+
+```bash
+sudo apt-get install -y mongodb-org
+sudo systemctl enable --now mongod
+```
+
+Follow the [official MongoDB installation guide](https://www.mongodb.com/docs/manual/administration/install-community/)
+for other platforms.
+
+**Option C — MongoDB Atlas (hosted):**
+
+Create a free cluster at [mongodb.com/atlas](https://www.mongodb.com/atlas),
+add your IP to the network access list, create a database user, and copy the
+connection string it provides (it looks like
+`mongodb+srv://<user>:<password>@<cluster>/`).
+
+Verify the connection (adjust the URI for your setup):
+
+```bash
+python -c "from pymongo import MongoClient; MongoClient('mongodb://localhost:27017', serverSelectionTimeoutMS=5000).admin.command('ping'); print('MongoDB OK')"
+```
+
+Set `MONGODB_URI` and `MONGODB_DATABASE` in your `.env` to match the instance you
+chose. The bot creates the database, collections, and required indexes
+automatically on first run, so no manual schema setup is needed.
+
 Copy the example environment file and fill in your values:
 
 ```bash

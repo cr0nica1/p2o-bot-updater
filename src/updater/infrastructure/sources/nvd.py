@@ -49,7 +49,7 @@ def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
     for key in _NVD_METRIC_KEYS:
         entries = metrics.get(key)
         if entries:
-            entry = entries[0]
+            entry = _preferred_metric_entry(entries)
             data = entry.get("cvssData", {})
             cvss_score = data.get("baseScore")
             sev = data.get("baseSeverity") or entry.get("baseSeverity")
@@ -88,7 +88,14 @@ def strip_non_english_descriptions(item: dict[str, Any]) -> dict[str, Any]:
 
 _NIST_SOURCES = {"nvd@nist.gov"}
 
-_NVD_METRIC_KEYS = ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
+_NVD_METRIC_KEYS = ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
+
+
+def _preferred_metric_entry(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    for entry in entries:
+        if entry.get("source") in _NIST_SOURCES:
+            return entry
+    return entries[0]
 
 
 def strip_non_nist_cvss_metrics(item: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +104,14 @@ def strip_non_nist_cvss_metrics(item: dict[str, Any]) -> dict[str, Any]:
     metrics = cve.get("metrics")
     if not metrics:
         return cleaned
+
+    has_nist = any(
+        entry.get("source") in _NIST_SOURCES
+        for entries in metrics.values()
+        if isinstance(entries, list)
+        for entry in entries
+    )
+
     for key in list(metrics.keys()):
         entries = metrics.get(key)
         if not isinstance(entries, list):
@@ -105,6 +120,10 @@ def strip_non_nist_cvss_metrics(item: dict[str, Any]) -> dict[str, Any]:
         if nist_entries:
             metrics[key] = nist_entries
         elif all("source" not in e for e in entries):
+            metrics[key] = entries
+        elif not has_nist:
+            # NIST has not scored this CVE anywhere; fall back to the
+            # CNA-provided metrics so severity/CVSS are not lost as N/A.
             metrics[key] = entries
         else:
             del metrics[key]
