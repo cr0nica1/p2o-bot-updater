@@ -236,7 +236,14 @@ def _extract_date(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+_HEADING_RE = re.compile(r"^h[1-6]$")
+
+
 def _extract_description(soup: BeautifulSoup, text: str) -> str | None:
+    section = _extract_vulnerability_details_section(soup)
+    if section:
+        return section
+
     for td in soup.find_all("td", string=_vulnerability_details_match):
         sibling = td.find_next_sibling("td")
         if sibling:
@@ -249,12 +256,24 @@ def _extract_description(soup: BeautifulSoup, text: str) -> str | None:
         if tag and tag.get("content"):
             return str(tag["content"]).strip()
 
-    description = _extract_labeled_value(text, "description")
-    if description:
-        return description
+    return _extract_labeled_value(text, "description")
 
-    paragraphs = [paragraph.get_text(" ", strip=True) for paragraph in soup.find_all("p")]
-    return next((paragraph for paragraph in paragraphs if paragraph), None)
+
+def _extract_vulnerability_details_section(soup: BeautifulSoup) -> str | None:
+    for heading in soup.find_all(_HEADING_RE):
+        if heading.get_text(strip=True).upper() != "VULNERABILITY DETAILS":
+            continue
+        parts: list[str] = []
+        for sibling in heading.find_next_siblings():
+            if sibling.name and _HEADING_RE.match(sibling.name):
+                break
+            value = sibling.get_text(" ", strip=True)
+            if value:
+                parts.append(value)
+        joined = "\n".join(parts).strip()
+        if joined:
+            return joined
+    return None
 
 
 def _vulnerability_details_match(text: str | None) -> bool:
