@@ -289,6 +289,7 @@ class MongoVendorConfigRepository:
 
     def find_by_target(self, target: "Target") -> VendorConfig | None:
         normalized = normalize_name(target.name)
+        # Non-unique index: first matching config wins (legacy rows have normalized_target=None).
         document = self.collection.find_one({"normalized_target": normalized})
         return vendor_config_from_document(document) if document else None
 

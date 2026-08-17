@@ -14,6 +14,7 @@ import discord
 from updater.application.export_json import ExportService
 from updater.application.firmware_lookup import (
     BrowserAdapter,
+    FetchAdapter,
     FirmwareLookupError,
     FirmwareLookupService,
     validate_vendor_config,
@@ -29,6 +30,7 @@ from updater.domain.repositories import (
     VulnerabilityRepository,
     VulnerabilitySource,
 )
+from updater.infrastructure.browser import BrowserLaunchError, HttpFetchError
 from updater.infrastructure.csv_loader import CsvTargetLoader
 from updater.presentation.discord_bot.config import ConfigError, update_schedule
 from updater.presentation.discord_bot.formatting import (
@@ -53,7 +55,7 @@ class Services:
     sources: list[VulnerabilitySource]
     vendor_config_repo: VendorConfigRepository
     browser: BrowserAdapter
-    http: BrowserAdapter | None = None
+    http: FetchAdapter | None = None
 
 
 _CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
@@ -424,6 +426,8 @@ async def handle_lookup_firmware(
             )
         else:
             result = await asyncio.to_thread(lookup.lookup, target_id)
+    except (FirmwareLookupError, HttpFetchError, BrowserLaunchError) as exc:
+        return CommandResult(text=str(exc), ephemeral=True)
     except Exception:
         return CommandResult(
             text=f"No firmware information found for {target.name}.",

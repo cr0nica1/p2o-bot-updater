@@ -1322,21 +1322,26 @@ async def test_lookup_firmware_returns_no_info_when_no_vendor():
     target = Target(id="t1", name="Some Target")
     services = _services(target_repo=FakeTargetRepo([target]))
     result = await handle_lookup_firmware(services, target_id=1)
-    assert "No firmware information" in result.text
+    assert result.text == "Target 'Some Target' has no vendor. Set vendor before firmware lookup."
+    assert result.ephemeral is True
 
 
 async def test_lookup_firmware_returns_no_info_when_no_vendor_alias():
     target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon")
     services = _services(target_repo=FakeTargetRepo([target]))
     result = await handle_lookup_firmware(services, target_id=1)
-    assert "No firmware information" in result.text
+    assert result.text == (
+        "Target 'Canon MF654Cdw' has no vendor_alias. Set vendor_alias before firmware lookup."
+    )
+    assert result.ephemeral is True
 
 
 async def test_lookup_firmware_returns_no_info_when_no_config():
     target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon", vendor_alias="canon-mf654cdw")
     services = _services(target_repo=FakeTargetRepo([target]))
     result = await handle_lookup_firmware(services, target_id=1)
-    assert "No firmware information" in result.text
+    assert result.text == "No firmware vendor config found for Canon."
+    assert result.ephemeral is True
 
 
 async def test_lookup_firmware_returns_no_info_on_lookup_error():
@@ -1354,7 +1359,34 @@ async def test_lookup_firmware_returns_no_info_on_lookup_error():
         browser=browser,
     )
     result = await handle_lookup_firmware(services, target_id=1)
-    assert "No firmware information" in result.text
+    assert result.text == (
+        "Regex did not match #downloads at https://example.com/canon-mf654cdw/fw."
+    )
+    assert result.ephemeral is True
+
+
+async def test_lookup_firmware_surfaces_error_when_http_adapter_not_configured():
+    target = Target(id="t1", name="Chroma")
+    config = VendorConfig(
+        vendor="Chroma",
+        target="Chroma",
+        url_template="https://github.com/chroma-core/chroma/releases",
+        regex=r"releases/tag/(\d+\.\d+\.\d+)",
+        fetch="http",
+    )
+    services = Services(
+        target_repo=FakeTargetRepo([target]),
+        version_repo=FakeVersionRepo(),
+        vulnerability_repo=FakeVulnRepo(),
+        target_vulnerability_repo=FakeLinkRepo(),
+        sources=[],
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        browser=FakeBrowserAdapter(),
+        http=None,
+    )
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert result.text == "HTTP fetch adapter is not configured for this lookup."
+    assert result.ephemeral is True
 
 
 async def test_lookup_firmware_with_runtime_inputs():

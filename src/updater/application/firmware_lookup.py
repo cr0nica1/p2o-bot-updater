@@ -17,6 +17,10 @@ class BrowserAdapter(Protocol):
     def fetch_element_html(self, url: str, element_id: str) -> str: ...
 
 
+class FetchAdapter(Protocol):
+    def fetch_html(self, url: str, selector: str | None = None) -> str: ...
+
+
 @dataclass(frozen=True)
 class FirmwareLookupResult:
     target_name: str
@@ -55,8 +59,8 @@ def _render_url(template: str, vendor_alias: str) -> str:
     return template.replace("{alias}", quote(vendor_alias, safe="/"))
 
 
-def _version_key(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in re.findall(r"\d+", value))
+def _version_key(value: str | None) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", value or ""))
 
 
 def _select_match(regex: str, html: str, select: str):
@@ -71,7 +75,6 @@ def _select_match(regex: str, html: str, select: str):
 
 
 def _resolve_download_url(page_url: str, captured_url: str) -> str:
-    from urllib.parse import quote
     resolved = urljoin(page_url, captured_url.strip())
     parsed = urlparse(resolved)
     if parsed.scheme != "https":
@@ -85,7 +88,7 @@ class FirmwareLookupService:
         target_repo: TargetRepository,
         vendor_config_repo: VendorConfigRepository,
         browser: BrowserAdapter,
-        http: "BrowserAdapter | None" = None,
+        http: "FetchAdapter | None" = None,
     ) -> None:
         self.target_repo = target_repo
         self.vendor_config_repo = vendor_config_repo
