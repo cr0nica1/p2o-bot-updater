@@ -42,6 +42,10 @@ class Target:
     def normalized_name(self) -> str:
         return normalize_name(self.name)
 
+    @property
+    def storage_id(self) -> str:
+        return self.id or self.normalized_name
+
     def search_queries(self) -> list[str]:
         return _unique_non_empty([self.name, *self.aliases])
 
