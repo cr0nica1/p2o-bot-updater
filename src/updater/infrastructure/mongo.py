@@ -90,6 +90,11 @@ def vendor_config_to_document(config: VendorConfig) -> dict[str, Any]:
         "url_template": config.url_template,
         "attr_id": config.attr_id,
         "regex": config.regex,
+        "target": config.target,
+        "normalized_target": config.normalized_target,
+        "fetch": config.fetch,
+        "selector": config.selector,
+        "select": config.select,
         "created_at": config.created_at,
         "updated_at": config.updated_at,
     }
@@ -100,8 +105,12 @@ def vendor_config_from_document(document: dict[str, Any]) -> VendorConfig:
         id=_document_id(document),
         vendor=document["vendor"],
         url_template=document["url_template"],
-        attr_id=document["attr_id"],
-        regex=document["regex"],
+        attr_id=document.get("attr_id", ""),
+        regex=document.get("regex", ""),
+        target=document.get("target"),
+        fetch=document.get("fetch", "browser"),
+        selector=document.get("selector"),
+        select=document.get("select", "first"),
         created_at=document["created_at"],
         updated_at=document["updated_at"],
     )
@@ -203,6 +212,7 @@ class MongoDatabase:
             unique=True,
         )
         self.db.vendor_configs.create_index("normalized_vendor", unique=True)
+        self.db.vendor_configs.create_index("normalized_target")
 
 
 class MongoTargetRepository:
@@ -275,6 +285,11 @@ class MongoVendorConfigRepository:
 
     def find_by_vendor(self, vendor: str) -> VendorConfig | None:
         document = self.collection.find_one({"normalized_vendor": normalize_name(vendor)})
+        return vendor_config_from_document(document) if document else None
+
+    def find_by_target(self, target: "Target") -> VendorConfig | None:
+        normalized = normalize_name(target.name)
+        document = self.collection.find_one({"normalized_target": normalized})
         return vendor_config_from_document(document) if document else None
 
     def list_all(self) -> list[VendorConfig]:
