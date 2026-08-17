@@ -16,6 +16,7 @@ from updater.application.firmware_lookup import (
     BrowserAdapter,
     FirmwareLookupError,
     FirmwareLookupService,
+    validate_vendor_config,
     validate_vendor_inputs,
 )
 from updater.application.import_targets import ImportTargetsService
@@ -488,24 +489,32 @@ async def handle_import_vendor_firmware(
     saved = 0
     errors: list[str] = []
     for row in reader:
-        vendor = row.get("vendor", "").strip()
-        url_template = row.get("url_template", "").strip()
-        attr_id = row.get("attr_id", "").strip()
-        regex = row.get("regex", "").strip()
-        if not all([vendor, url_template, attr_id, regex]):
+        vendor = (row.get("vendor") or "").strip()
+        url_template = (row.get("url_template") or "").strip()
+        regex = (row.get("regex") or "").strip()
+        attr_id = (row.get("attr_id") or "").strip()
+        target = (row.get("target") or "").strip() or None
+        fetch = (row.get("fetch") or "browser").strip() or "browser"
+        selector = (row.get("selector") or "").strip() or None
+        select = (row.get("select") or "first").strip() or "first"
+        if not all([vendor, url_template, regex]):
             errors.append(f"Row skipped (missing fields): {vendor or '<empty>'}")
-            continue
-        try:
-            validate_vendor_inputs(url_template, regex)
-        except FirmwareLookupError as exc:
-            errors.append(f"{vendor}: {exc}")
             continue
         config = VendorConfig(
             vendor=vendor,
             url_template=url_template,
             attr_id=attr_id,
             regex=regex,
+            target=target,
+            fetch=fetch,
+            selector=selector,
+            select=select,
         )
+        try:
+            validate_vendor_config(config)
+        except FirmwareLookupError as exc:
+            errors.append(f"{vendor}: {exc}")
+            continue
         services.vendor_config_repo.upsert(config)
         saved += 1
     lines = [f"Imported {saved} vendor firmware config(s)."]

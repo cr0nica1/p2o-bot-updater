@@ -1442,3 +1442,19 @@ async def test_set_vendor_firmware_allows_missing_alias_placeholder():
         regex=r"(v[\d.]+).*(https://[^\"']+)",
     )
     assert "saved" in result.text.lower()
+
+
+async def test_import_vendor_firmware_supports_version_checker_columns():
+    csv_data = (
+        "target,vendor,url_template,fetch,selector,select,regex\n"
+        "Chroma,Chroma,https://github.com/chroma-core/chroma/releases,http,,first,"
+        'releases/tag/(\\d+\\.\\d+\\.\\d+)\n'
+    ).encode()
+    services = _services()
+    result = await handle_import_vendor_firmware(services, csv_bytes=csv_data)
+    assert "1" in result.text
+    saved = services.vendor_config_repo.find_by_vendor("Chroma")
+    assert saved is not None
+    assert saved.target == "Chroma"
+    assert saved.fetch == "http"
+    assert saved.attr_id == ""
