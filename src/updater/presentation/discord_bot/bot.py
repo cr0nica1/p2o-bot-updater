@@ -14,6 +14,7 @@ from discord.ext import tasks
 from updater.application.export_json import ExportService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
 from updater.infrastructure.browser.cloak import CloakBrowserAdapter
+from updater.infrastructure.browser.http_fetch import HttpFetchAdapter
 from updater.infrastructure.mongo import (
     MongoDatabase,
     MongoTargetRepository,
@@ -311,6 +312,41 @@ def build_client(config: BotConfig) -> discord.Client:
             ),
         )
 
+    @tree.command(name="set-version-check", description="Configure a target version checker", guild=guild)
+    @app_commands.describe(
+        vendor="Config name (use the target name)",
+        url_template="Exact HTTPS URL to fetch",
+        regex="Regex with group 1 = version",
+        target="Target name to bind this checker to",
+        fetch="'http' (default for release pages) or 'browser'",
+        selector="Optional CSS selector",
+        select="first (default), last, or max",
+    )
+    async def set_version_check(
+        interaction: discord.Interaction,
+        vendor: str,
+        url_template: str,
+        regex: str,
+        target: str | None = None,
+        fetch: str = "http",
+        selector: str | None = None,
+        select: str = "first",
+    ):
+        if not await _admin_only(interaction):
+            return
+        await _reply(
+            interaction,
+            await cmd.handle_set_vendor_firmware(
+                services, vendor=vendor, url_template=url_template, attr_id="",
+                regex=regex, target=target, fetch=fetch, selector=selector, select=select,
+            ),
+        )
+
+    @tree.command(name="check-version", description="Check a target's current version", guild=guild)
+    @app_commands.describe(target_id="Target number from /list-targets")
+    async def check_version(interaction: discord.Interaction, target_id: int):
+        await _reply(interaction, await cmd.handle_lookup_firmware(services, target_id=target_id))
+
     @tree.command(name="import-vendor-firmware", description="Import vendor firmware configs from CSV", guild=guild)
     async def import_vendor_firmware(interaction: discord.Interaction, file: discord.Attachment):
         if not await _admin_only(interaction):
@@ -470,6 +506,7 @@ def _build_services(config: BotConfig) -> cmd.Services:
         sources=[NvdSource(), ZdiSource()],
         vendor_config_repo=MongoVendorConfigRepository(db.db),
         browser=CloakBrowserAdapter(),
+        http=HttpFetchAdapter(),
     )
 
 

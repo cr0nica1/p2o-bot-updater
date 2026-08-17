@@ -64,8 +64,12 @@ class TargetVersion:
 class VendorConfig:
     vendor: str
     url_template: str
-    attr_id: str
-    regex: str
+    attr_id: str = ""
+    regex: str = ""
+    target: str | None = None
+    fetch: str = "browser"
+    selector: str | None = None
+    select: str = "first"
     id: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -73,6 +77,10 @@ class VendorConfig:
     @property
     def normalized_vendor(self) -> str:
         return normalize_name(self.vendor)
+
+    @property
+    def normalized_target(self) -> str | None:
+        return normalize_name(self.target) if self.target else None
 
 
 @dataclass

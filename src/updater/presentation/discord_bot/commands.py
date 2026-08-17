@@ -14,9 +14,10 @@ import discord
 from updater.application.export_json import ExportService
 from updater.application.firmware_lookup import (
     BrowserAdapter,
+    FetchAdapter,
     FirmwareLookupError,
     FirmwareLookupService,
-    validate_vendor_inputs,
+    validate_vendor_config,
 )
 from updater.application.import_targets import ImportTargetsService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
@@ -29,6 +30,7 @@ from updater.domain.repositories import (
     VulnerabilityRepository,
     VulnerabilitySource,
 )
+from updater.infrastructure.browser import BrowserLaunchError, HttpFetchError
 from updater.infrastructure.csv_loader import CsvTargetLoader
 from updater.presentation.discord_bot.config import ConfigError, update_schedule
 from updater.presentation.discord_bot.formatting import (
@@ -53,6 +55,7 @@ class Services:
     sources: list[VulnerabilitySource]
     vendor_config_repo: VendorConfigRepository
     browser: BrowserAdapter
+    http: FetchAdapter | None = None
 
 
 _CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
@@ -408,6 +411,7 @@ async def handle_lookup_firmware(
         services.target_repo,
         services.vendor_config_repo,
         services.browser,
+        services.http,
     )
 
     runtime_inputs = all([url_template, attr_id, regex])
@@ -422,6 +426,8 @@ async def handle_lookup_firmware(
             )
         else:
             result = await asyncio.to_thread(lookup.lookup, target_id)
+    except (FirmwareLookupError, HttpFetchError, BrowserLaunchError) as exc:
+        return CommandResult(text=str(exc), ephemeral=True)
     except Exception:
         return CommandResult(
             text=f"No firmware information found for {target.name}.",
@@ -433,8 +439,9 @@ async def handle_lookup_firmware(
         f"Vendor: {result.vendor}",
         f"URL: {result.resolved_url}",
         f"Version: {result.version}",
-        f"Download: {result.download_url}",
     ]
+    if result.download_url:
+        lines.append(f"Download: {result.download_url}")
     return CommandResult(text="\n".join(lines))
 
 
@@ -461,21 +468,29 @@ async def handle_set_vendor_firmware(
     *,
     vendor: str,
     url_template: str,
-    attr_id: str,
+    attr_id: str = "",
     regex: str,
+    target: str | None = None,
+    fetch: str = "browser",
+    selector: str | None = None,
+    select: str = "first",
 ) -> CommandResult:
-    try:
-        validate_vendor_inputs(url_template, regex)
-    except FirmwareLookupError as exc:
-        return CommandResult(text=str(exc), ephemeral=True)
     config = VendorConfig(
         vendor=vendor,
         url_template=url_template,
         attr_id=attr_id,
         regex=regex,
+        target=target,
+        fetch=fetch,
+        selector=selector,
+        select=select,
     )
+    try:
+        validate_vendor_config(config)
+    except FirmwareLookupError as exc:
+        return CommandResult(text=str(exc), ephemeral=True)
     services.vendor_config_repo.upsert(config)
-    return CommandResult(text=f"Vendor firmware config saved: {vendor}")
+    return CommandResult(text=f"Version check config saved: {vendor}")
 
 
 async def handle_import_vendor_firmware(
@@ -488,24 +503,32 @@ async def handle_import_vendor_firmware(
     saved = 0
     errors: list[str] = []
     for row in reader:
-        vendor = row.get("vendor", "").strip()
-        url_template = row.get("url_template", "").strip()
-        attr_id = row.get("attr_id", "").strip()
-        regex = row.get("regex", "").strip()
-        if not all([vendor, url_template, attr_id, regex]):
+        vendor = (row.get("vendor") or "").strip()
+        url_template = (row.get("url_template") or "").strip()
+        regex = (row.get("regex") or "").strip()
+        attr_id = (row.get("attr_id") or "").strip()
+        target = (row.get("target") or "").strip() or None
+        fetch = (row.get("fetch") or "browser").strip() or "browser"
+        selector = (row.get("selector") or "").strip() or None
+        select = (row.get("select") or "first").strip() or "first"
+        if not all([vendor, url_template, regex]):
             errors.append(f"Row skipped (missing fields): {vendor or '<empty>'}")
-            continue
-        try:
-            validate_vendor_inputs(url_template, regex)
-        except FirmwareLookupError as exc:
-            errors.append(f"{vendor}: {exc}")
             continue
         config = VendorConfig(
             vendor=vendor,
             url_template=url_template,
             attr_id=attr_id,
             regex=regex,
+            target=target,
+            fetch=fetch,
+            selector=selector,
+            select=select,
         )
+        try:
+            validate_vendor_config(config)
+        except FirmwareLookupError as exc:
+            errors.append(f"{vendor}: {exc}")
+            continue
         services.vendor_config_repo.upsert(config)
         saved += 1
     lines = [f"Imported {saved} vendor firmware config(s)."]

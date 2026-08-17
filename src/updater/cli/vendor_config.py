@@ -24,13 +24,19 @@ def build_parser() -> argparse.ArgumentParser:
     add = subparsers.add_parser("add")
     add.add_argument("--vendor", required=True)
     add.add_argument("--url-template", required=True)
-    add.add_argument("--attr-id", required=True)
+    add.add_argument("--attr-id", default="")
     add.add_argument("--regex", required=True)
+    add.add_argument("--target")
+    add.add_argument("--fetch", default="browser", choices=["browser", "http"])
+    add.add_argument("--selector")
+    add.add_argument("--select", default="first", choices=["first", "last", "max"])
 
     subparsers.add_parser("list")
 
     remove = subparsers.add_parser("remove")
     remove.add_argument("--vendor", required=True)
+
+    subparsers.add_parser("seed")
     return parser
 
 
@@ -45,6 +51,10 @@ def main(argv: list[str] | None = None, *, repo=None) -> int:
                 url_template=args.url_template,
                 attr_id=args.attr_id,
                 regex=args.regex,
+                target=args.target,
+                fetch=args.fetch,
+                selector=args.selector,
+                select=args.select,
             )
             validate_vendor_config(config)
             repository.upsert(config)
@@ -64,6 +74,17 @@ def main(argv: list[str] | None = None, *, repo=None) -> int:
                 return 0
             print(f"Vendor config not found: {args.vendor}", file=sys.stderr)
             return 1
+        if args.command == "seed":
+            from updater.infrastructure.mongo import MongoDatabase, MongoTargetRepository
+            from updater.infrastructure.seed.version_checks import seed as seed_version_checks
+
+            config = load_config(Path(args.env))
+            db = MongoDatabase(uri=config.mongodb_uri, database=config.mongodb_database)
+            counts = seed_version_checks(
+                MongoTargetRepository(db.db), MongoVendorConfigRepository(db.db)
+            )
+            print(f"Seeded {counts['targets']} targets and {counts['configs']} version checks.")
+            return 0
     except (ConfigError, FirmwareLookupError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

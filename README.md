@@ -272,6 +272,34 @@ firmware-lookup \
   --regex '(v[\d.]+).*(https://[^"'"']+)'
 ```
 
+### Target version checkers
+
+Ten Pwn2Own targets ship on-demand version checkers that read each vendor's
+release/changelog page directly. Seed them into MongoDB:
+
+```bash
+version-config seed
+```
+
+Then check a target's current version by its `/list-targets` number:
+
+```bash
+version-lookup --target-id 7
+```
+
+Each checker is a `VendorConfig` bound to a target with `fetch=http`, an exact
+URL, a `select` strategy (`first`/`last`/`max`), and a regex whose first group
+is the version. Add or override one with:
+
+```bash
+version-config add --vendor Chroma --target Chroma \
+  --url-template https://github.com/chroma-core/chroma/releases \
+  --fetch http --select first \
+  --regex 'releases/tag/(\d+\.\d+\.\d+)(?=["/#?])'
+```
+
+On Discord: `/set-version-check` and `/check-version`.
+
 ### Development
 
 Run the full test suite:

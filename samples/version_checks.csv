@@ -1,0 +1,4 @@
+target,vendor,url_template,fetch,selector,select,regex
+Philips Hue Bridge Pro,Philips Hue Bridge Pro,https://www.philips-hue.com/en-us/support/release-notes/bridge-pro,http,,first,Software version\s+(\d{10})
+OpenAI Codex,OpenAI Codex,https://learn.chatgpt.com/docs/changelog?type=codex-cli,http,,first,@openai/codex@(\d+\.\d+\.\d+)
+Oracle Autonomous AI Database,Oracle Autonomous AI Database,https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/autonomous-ai-database-updates.html,http,,max,(?:Release Update\s+|release-update-)(\d+(?:\.\d+){1,2})

@@ -25,6 +25,14 @@ class FakeVendorConfigRepository:
 
         return self.configs.get(normalize_name(vendor))
 
+    def find_by_target(self, target):
+        from updater.domain.models import normalize_name
+
+        norm = normalize_name(target.name)
+        return next(
+            (c for c in self.configs.values() if c.normalized_target == norm), None
+        )
+
 
 class FakeBrowser:
     def __init__(self, html):
@@ -33,6 +41,16 @@ class FakeBrowser:
 
     def fetch_element_html(self, url, element_id):
         self.calls.append((url, element_id))
+        return self.html
+
+
+class FakeHttp:
+    def __init__(self, html):
+        self.html = html
+        self.calls = []
+
+    def fetch_html(self, url, selector=None):
+        self.calls.append((url, selector))
         return self.html
 
 
@@ -195,18 +213,116 @@ def test_lookup_rejects_non_https_download_url():
         service.lookup(1)
 
 
-def test_validate_vendor_config_rejects_bad_config():
+def test_validate_vendor_config_rejects_non_https():
     with pytest.raises(FirmwareLookupError, match="HTTPS"):
         validate_vendor_config(
-            VendorConfig(vendor="Canon", url_template="http://vendor.example/{alias}", attr_id="firmware", regex="(.+) (.+)")
+            VendorConfig(vendor="Canon", url_template="http://vendor.example/{alias}", regex="(.+)")
         )
 
-    with pytest.raises(FirmwareLookupError, match=r"\{alias\}"):
+
+def test_validate_vendor_config_allows_missing_alias_placeholder():
+    # {alias} is now optional; a fixed URL with one capture group is valid.
+    validate_vendor_config(
+        VendorConfig(vendor="Canon", url_template="https://vendor.example/releases", regex="(.+)")
+    )
+
+
+def test_validate_vendor_config_requires_at_least_one_group():
+    with pytest.raises(FirmwareLookupError, match="at least one capture group"):
         validate_vendor_config(
-            VendorConfig(vendor="Canon", url_template="https://vendor.example/downloads", attr_id="firmware", regex="(.+) (.+)")
+            VendorConfig(vendor="Canon", url_template="https://vendor.example/x", regex="no groups")
         )
 
-    with pytest.raises(FirmwareLookupError, match="at least two capture groups"):
+
+def test_validate_vendor_config_rejects_bad_fetch_and_select():
+    with pytest.raises(FirmwareLookupError, match="fetch"):
         validate_vendor_config(
-            VendorConfig(vendor="Canon", url_template="https://vendor.example/{alias}", attr_id="firmware", regex="(.+)")
+            VendorConfig(vendor="C", url_template="https://x", regex="(.+)", fetch="ftp")
         )
+    with pytest.raises(FirmwareLookupError, match="select"):
+        validate_vendor_config(
+            VendorConfig(vendor="C", url_template="https://x", regex="(.+)", select="middle")
+        )
+
+
+def _http_service(targets, configs, html):
+    return FirmwareLookupService(
+        target_repo=FakeTargetRepository(targets),
+        vendor_config_repo=FakeVendorConfigRepository(configs),
+        browser=FakeBrowser(""),
+        http=FakeHttp(html),
+    )
+
+
+def test_lookup_uses_target_bound_http_config_version_only():
+    target = Target(name="Chroma", vendor="Chroma")
+    config = VendorConfig(
+        vendor="Chroma",
+        target="Chroma",
+        url_template="https://github.com/chroma-core/chroma/releases",
+        regex=r'releases/tag/(\d+\.\d+\.\d+)(?=["/#?])',
+        fetch="http",
+        select="first",
+    )
+    service = _http_service(
+        [target], [config],
+        '<a href="/chroma-core/chroma/releases/tag/cli-1.4.4">x</a>'
+        '<a href="/chroma-core/chroma/releases/tag/1.5.9">x</a>',
+    )
+    result = service.lookup(1)
+    assert result.version == "1.5.9"
+    assert result.download_url is None
+    assert result.resolved_url == "https://github.com/chroma-core/chroma/releases"
+
+
+def test_lookup_select_max_picks_highest_version():
+    target = Target(name="Oracle Autonomous AI Database", vendor="Oracle")
+    config = VendorConfig(
+        vendor="Oracle Autonomous AI Database",
+        target="Oracle Autonomous AI Database",
+        url_template="https://docs.oracle.com/x.html",
+        regex=r"(?:Release Update\s+|release-update-)(\d+(?:\.\d+){1,2})",
+        fetch="http",
+        select="max",
+    )
+    service = _http_service(
+        [target], [config],
+        'Release Update 23.26.2 <a href="july-2026-release-update-23.26.3.html">x</a>',
+    )
+    assert service.lookup(1).version == "23.26.3"
+
+
+def test_lookup_select_last_picks_last_match():
+    target = Target(name="T", vendor="V")
+    config = VendorConfig(
+        vendor="T", target="T", url_template="https://x", regex=r"v(\d+)",
+        fetch="http", select="last",
+    )
+    service = _http_service([target], [config], "v1 v2 v9 v4")
+    assert service.lookup(1).version == "4"
+
+
+def test_lookup_http_config_without_alias_needs_no_vendor_alias():
+    target = Target(name="LiteLLM")  # no vendor, no vendor_alias
+    config = VendorConfig(
+        vendor="LiteLLM", target="LiteLLM",
+        url_template="https://docs.litellm.ai/release_notes/",
+        regex=r"(v\d+\.\d+\.\d+)", fetch="http",
+    )
+    service = _http_service([target], [config], "v1.97.0")
+    assert service.lookup(1).version == "v1.97.0"
+
+
+def test_lookup_http_config_errors_when_no_http_adapter():
+    target = Target(name="Chroma")
+    config = VendorConfig(
+        vendor="Chroma", target="Chroma", url_template="https://x",
+        regex=r"(\d+)", fetch="http",
+    )
+    service = FirmwareLookupService(
+        target_repo=FakeTargetRepository([target]),
+        vendor_config_repo=FakeVendorConfigRepository([config]),
+        browser=FakeBrowser(""),
+    )
+    with pytest.raises(FirmwareLookupError, match="HTTP fetch adapter"):
+        service.lookup(1)

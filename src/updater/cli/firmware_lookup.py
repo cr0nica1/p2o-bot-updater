@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from updater.application.firmware_lookup import FirmwareLookupError, FirmwareLookupService
-from updater.infrastructure.browser import BrowserLaunchError, CloakBrowserAdapter
+from updater.infrastructure.browser import BrowserLaunchError, CloakBrowserAdapter, HttpFetchAdapter, HttpFetchError
 from updater.infrastructure.mongo import MongoDatabase, MongoTargetRepository, MongoVendorConfigRepository
 from updater.presentation.discord_bot.config import ConfigError, load_config
 
@@ -17,6 +17,7 @@ def _build_service(env_path: Path) -> FirmwareLookupService:
         target_repo=MongoTargetRepository(db.db),
         vendor_config_repo=MongoVendorConfigRepository(db.db),
         browser=CloakBrowserAdapter(),
+        http=HttpFetchAdapter(),
     )
 
 
@@ -47,7 +48,7 @@ def main(argv: list[str] | None = None, *, service=None) -> int:
             )
         else:
             result = lookup_service.lookup(args.target_id)
-    except (ConfigError, FirmwareLookupError, BrowserLaunchError, RuntimeError) as exc:
+    except (ConfigError, FirmwareLookupError, BrowserLaunchError, HttpFetchError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
@@ -55,7 +56,8 @@ def main(argv: list[str] | None = None, *, service=None) -> int:
     print(f"Vendor: {result.vendor}")
     print(f"Resolved URL: {result.resolved_url}")
     print(f"Firmware Version: {result.version}")
-    print(f"Download URL: {result.download_url}")
+    if result.download_url:
+        print(f"Download URL: {result.download_url}")
     return 0
 
 

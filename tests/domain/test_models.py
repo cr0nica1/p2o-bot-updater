@@ -83,3 +83,22 @@ def test_vendor_config_stores_crawler_settings():
     assert config.url_template == "https://vendor.example/downloads/{alias}/firmware"
     assert config.attr_id == "firmware"
     assert config.regex == r"Version ([^<]+).*href=\"([^\"]+)\""
+
+
+def test_vendor_config_new_fields_default_to_legacy_behavior():
+    from updater.domain.models import VendorConfig
+
+    config = VendorConfig(vendor="Canon", url_template="https://x/{alias}", regex="(.+)")
+    assert config.attr_id == ""
+    assert config.target is None
+    assert config.fetch == "browser"
+    assert config.selector is None
+    assert config.select == "first"
+    assert config.normalized_target is None
+
+
+def test_vendor_config_normalized_target():
+    from updater.domain.models import VendorConfig
+
+    config = VendorConfig(vendor="Chroma", url_template="https://x", regex="(.+)", target="  Chroma  ")
+    assert config.normalized_target == "chroma"

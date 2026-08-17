@@ -386,3 +386,50 @@ def test_vendor_config_repository_delete_returns_true_when_match_found():
 
     assert deleted is True
     assert collection.last_filter == {"normalized_vendor": "canon"}
+
+
+def test_vendor_config_document_round_trip_with_new_fields():
+    from updater.domain.models import VendorConfig
+    from updater.infrastructure.mongo import (
+        vendor_config_from_document,
+        vendor_config_to_document,
+    )
+
+    config = VendorConfig(
+        vendor="Chroma",
+        url_template="https://github.com/chroma-core/chroma/releases",
+        regex=r'releases/tag/(\d+\.\d+\.\d+)(?=["/#?])',
+        target="Chroma",
+        fetch="http",
+        selector=None,
+        select="max",
+    )
+    document = vendor_config_to_document(config)
+    assert document["normalized_target"] == "chroma"
+    assert document["fetch"] == "http"
+    assert document["select"] == "max"
+
+    restored = vendor_config_from_document({**document, "_id": "abc"})
+    assert restored.target == "Chroma"
+    assert restored.fetch == "http"
+    assert restored.select == "max"
+    assert restored.selector is None
+
+
+def test_vendor_config_from_legacy_document_defaults_new_fields():
+    from updater.infrastructure.mongo import vendor_config_from_document
+
+    legacy = {
+        "_id": "1",
+        "vendor": "Canon",
+        "url_template": "https://x/{alias}",
+        "attr_id": "firmware",
+        "regex": "(.+) (.+)",
+        "created_at": __import__("datetime").datetime(2026, 1, 1),
+        "updated_at": __import__("datetime").datetime(2026, 1, 1),
+    }
+    restored = vendor_config_from_document(legacy)
+    assert restored.fetch == "browser"
+    assert restored.select == "first"
+    assert restored.target is None
+    assert restored.selector is None
