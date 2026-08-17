@@ -1,4 +1,4 @@
-from updater.domain.models import Target, TargetVulnerability, VendorConfig, Vulnerability
+from updater.domain.models import Target, TargetVersion, TargetVulnerability, VendorConfig, Vulnerability
 from updater.infrastructure.mongo import (
     MongoTargetRepository,
     MongoTargetVersionRepository,
@@ -7,6 +7,8 @@ from updater.infrastructure.mongo import (
     MongoVulnerabilityRepository,
     target_from_document,
     target_to_document,
+    target_version_from_document,
+    target_version_to_document,
     target_vulnerability_to_document,
     vendor_config_from_document,
     vendor_config_to_document,
@@ -433,3 +435,13 @@ def test_vendor_config_from_legacy_document_defaults_new_fields():
     assert restored.select == "first"
     assert restored.target is None
     assert restored.selector is None
+
+
+def test_target_version_document_round_trips_previous_version():
+    version = TargetVersion(target_id="t1", version="1.1.0", previous_version="1.0.0")
+    document = target_version_to_document(version)
+    assert document["previous_version"] == "1.0.0"
+    # legacy documents without the field load as None
+    legacy = dict(document)
+    del legacy["previous_version"]
+    assert target_version_from_document(legacy).previous_version is None

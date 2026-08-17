@@ -102,3 +102,9 @@ def test_vendor_config_normalized_target():
 
     config = VendorConfig(vendor="Chroma", url_template="https://x", regex="(.+)", target="  Chroma  ")
     assert config.normalized_target == "chroma"
+
+
+def test_target_version_previous_version_defaults_to_none():
+    from updater.domain.models import TargetVersion
+    assert TargetVersion().previous_version is None
+    assert TargetVersion(previous_version="1.0.0").previous_version == "1.0.0"

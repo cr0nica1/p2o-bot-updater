@@ -54,6 +54,7 @@ class TargetVersion:
     release_date: datetime | None = None
     source_url: str | None = None
     is_latest: bool | None = None
+    previous_version: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
     id: str | None = None
     first_seen_at: datetime = field(default_factory=utc_now)
