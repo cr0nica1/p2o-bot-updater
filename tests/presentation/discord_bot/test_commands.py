@@ -127,6 +127,13 @@ class FakeVendorConfigRepo:
         norm = normalize_name(vendor)
         return next((c for c in self.configs.values() if c.normalized_vendor == norm), None)
 
+    def find_by_target(self, target):
+        from updater.domain.models import normalize_name
+        norm = normalize_name(target.name)
+        return next(
+            (c for c in self.configs.values() if c.normalized_target == norm), None
+        )
+
     def list_all(self):
         return list(self.configs.values())
 
