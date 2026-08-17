@@ -44,26 +44,32 @@ def test_vendor_config_add_validates_and_saves(capsys):
 
 def test_vendor_config_add_rejects_invalid_regex(capsys):
     repo = FakeRepo()
-
     code = main(
-        [
-            "add",
-            "--vendor",
-            "Canon",
-            "--url-template",
-            "https://vendor.example/{alias}",
-            "--attr-id",
-            "firmware",
-            "--regex",
-            "no groups",
-        ],
+        ["add", "--vendor", "Canon", "--url-template", "https://vendor.example/{alias}",
+         "--attr-id", "firmware", "--regex", "(unbalanced"],
         repo=repo,
     )
-
     captured = capsys.readouterr()
     assert code == 2
-    assert "at least one capture group" in captured.err
+    assert "Vendor regex is invalid" in captured.err
     assert repo.configs == {}
+
+
+def test_vendor_config_add_target_bound_http(capsys):
+    repo = FakeRepo()
+    code = main(
+        ["add", "--vendor", "Chroma", "--target", "Chroma",
+         "--url-template", "https://github.com/chroma-core/chroma/releases",
+         "--fetch", "http", "--select", "first",
+         "--regex", r'releases/tag/(\d+\.\d+\.\d+)(?=["/#?])'],
+        repo=repo,
+    )
+    assert code == 0
+    saved = repo.configs["chroma"]
+    assert saved.target == "Chroma"
+    assert saved.fetch == "http"
+    assert saved.attr_id == ""
+    assert "Saved vendor config: Chroma" in capsys.readouterr().out
 
 
 def test_vendor_config_list_prints_configs(capsys):

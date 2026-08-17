@@ -92,3 +92,18 @@ def test_firmware_lookup_cli_prints_errors(capsys):
     captured = capsys.readouterr()
     assert code == 2
     assert "No firmware vendor config found for Canon." in captured.err
+
+
+def test_firmware_lookup_cli_omits_download_when_absent(capsys):
+    service = FakeService(
+        FirmwareLookupResult(
+            target_name="Chroma", vendor="Chroma",
+            resolved_url="https://github.com/chroma-core/chroma/releases",
+            version="1.5.9", download_url=None, html_snippet="",
+        )
+    )
+    code = firmware_lookup.main(["--target-id", "1"], service=service)
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "Firmware Version: 1.5.9" in output
+    assert "Download URL" not in output

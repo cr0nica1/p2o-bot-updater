@@ -24,8 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
     add = subparsers.add_parser("add")
     add.add_argument("--vendor", required=True)
     add.add_argument("--url-template", required=True)
-    add.add_argument("--attr-id", required=True)
+    add.add_argument("--attr-id", default="")
     add.add_argument("--regex", required=True)
+    add.add_argument("--target")
+    add.add_argument("--fetch", default="browser", choices=["browser", "http"])
+    add.add_argument("--selector")
+    add.add_argument("--select", default="first", choices=["first", "last", "max"])
 
     subparsers.add_parser("list")
 
@@ -45,6 +49,10 @@ def main(argv: list[str] | None = None, *, repo=None) -> int:
                 url_template=args.url_template,
                 attr_id=args.attr_id,
                 regex=args.regex,
+                target=args.target,
+                fetch=args.fetch,
+                selector=args.selector,
+                select=args.select,
             )
             validate_vendor_config(config)
             repository.upsert(config)
