@@ -157,7 +157,17 @@ class FakeBrowserAdapter:
         return self.html
 
 
-def _services(target_repo=None, vuln_repo=None, link_repo=None, version_repo=None, sources=None, vendor_config_repo=None, browser=None):
+class FakeHttpAdapter:
+    def __init__(self, html="v1.0.0"):
+        self.html = html
+        self.calls = []
+
+    def fetch_html(self, url, selector=None):
+        self.calls.append((url, selector))
+        return self.html
+
+
+def _services(target_repo=None, vuln_repo=None, link_repo=None, version_repo=None, sources=None, vendor_config_repo=None, browser=None, http=None):
     return Services(
         target_repo=target_repo or FakeTargetRepo(),
         version_repo=version_repo or FakeVersionRepo(),
@@ -166,6 +176,7 @@ def _services(target_repo=None, vuln_repo=None, link_repo=None, version_repo=Non
         sources=sources or [],
         vendor_config_repo=vendor_config_repo or FakeVendorConfigRepo(),
         browser=browser or FakeBrowserAdapter(),
+        http=http or FakeHttpAdapter(),
     )
 
 
@@ -1458,3 +1469,39 @@ async def test_import_vendor_firmware_supports_version_checker_columns():
     assert saved.target == "Chroma"
     assert saved.fetch == "http"
     assert saved.attr_id == ""
+
+
+async def test_set_vendor_firmware_allows_fixed_url_and_target_binding():
+    services = _services()
+    result = await handle_set_vendor_firmware(
+        services,
+        vendor="Chroma",
+        url_template="https://github.com/chroma-core/chroma/releases",
+        attr_id="",
+        regex=r"releases/tag/(\d+\.\d+\.\d+)",
+        target="Chroma",
+        fetch="http",
+    )
+    assert "Chroma" in result.text
+    saved = services.vendor_config_repo.find_by_vendor("Chroma")
+    assert saved.target == "Chroma"
+    assert saved.fetch == "http"
+
+
+async def test_check_version_uses_target_bound_http_config():
+    from updater.domain.models import Target, VendorConfig
+    target = Target(id="t1", name="Chroma")
+    config = VendorConfig(
+        vendor="Chroma", target="Chroma",
+        url_template="https://github.com/chroma-core/chroma/releases",
+        regex=r'releases/tag/(\d+\.\d+\.\d+)(?=["/#?])', fetch="http",
+    )
+    http = FakeHttpAdapter(html='<a href="/chroma-core/chroma/releases/tag/1.5.9">x</a>')
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        http=http,
+    )
+    result = await handle_lookup_firmware(services, target_id=1)
+    assert "1.5.9" in result.text
+    assert "Download" not in result.text

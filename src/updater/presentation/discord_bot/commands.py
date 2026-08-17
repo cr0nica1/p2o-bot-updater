@@ -17,7 +17,6 @@ from updater.application.firmware_lookup import (
     FirmwareLookupError,
     FirmwareLookupService,
     validate_vendor_config,
-    validate_vendor_inputs,
 )
 from updater.application.import_targets import ImportTargetsService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
@@ -54,6 +53,7 @@ class Services:
     sources: list[VulnerabilitySource]
     vendor_config_repo: VendorConfigRepository
     browser: BrowserAdapter
+    http: BrowserAdapter | None = None
 
 
 _CVE_YEAR_RE = re.compile(r"\bCVE-(\d{4})-\d{4,7}\b", re.IGNORECASE)
@@ -409,6 +409,7 @@ async def handle_lookup_firmware(
         services.target_repo,
         services.vendor_config_repo,
         services.browser,
+        services.http,
     )
 
     runtime_inputs = all([url_template, attr_id, regex])
@@ -434,8 +435,9 @@ async def handle_lookup_firmware(
         f"Vendor: {result.vendor}",
         f"URL: {result.resolved_url}",
         f"Version: {result.version}",
-        f"Download: {result.download_url}",
     ]
+    if result.download_url:
+        lines.append(f"Download: {result.download_url}")
     return CommandResult(text="\n".join(lines))
 
 
@@ -462,21 +464,29 @@ async def handle_set_vendor_firmware(
     *,
     vendor: str,
     url_template: str,
-    attr_id: str,
+    attr_id: str = "",
     regex: str,
+    target: str | None = None,
+    fetch: str = "browser",
+    selector: str | None = None,
+    select: str = "first",
 ) -> CommandResult:
-    try:
-        validate_vendor_inputs(url_template, regex)
-    except FirmwareLookupError as exc:
-        return CommandResult(text=str(exc), ephemeral=True)
     config = VendorConfig(
         vendor=vendor,
         url_template=url_template,
         attr_id=attr_id,
         regex=regex,
+        target=target,
+        fetch=fetch,
+        selector=selector,
+        select=select,
     )
+    try:
+        validate_vendor_config(config)
+    except FirmwareLookupError as exc:
+        return CommandResult(text=str(exc), ephemeral=True)
     services.vendor_config_repo.upsert(config)
-    return CommandResult(text=f"Vendor firmware config saved: {vendor}")
+    return CommandResult(text=f"Version check config saved: {vendor}")
 
 
 async def handle_import_vendor_firmware(
