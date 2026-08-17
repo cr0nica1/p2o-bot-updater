@@ -55,14 +55,14 @@ def test_vendor_config_add_rejects_invalid_regex(capsys):
             "--attr-id",
             "firmware",
             "--regex",
-            "(.+)",
+            "no groups",
         ],
         repo=repo,
     )
 
     captured = capsys.readouterr()
     assert code == 2
-    assert "at least two capture groups" in captured.err
+    assert "at least one capture group" in captured.err
     assert repo.configs == {}
 
 

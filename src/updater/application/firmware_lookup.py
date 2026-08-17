@@ -35,18 +35,20 @@ def validate_vendor_inputs(url_template: str, regex: str) -> None:
     parsed = urlparse(url_template)
     if parsed.scheme != "https":
         raise FirmwareLookupError("Vendor URL template must use HTTPS")
-    if "{alias}" not in url_template:
-        raise FirmwareLookupError("Vendor URL template must contain {alias}")
     try:
         compiled = re.compile(regex, re.DOTALL)
     except re.error as exc:
         raise FirmwareLookupError(f"Vendor regex is invalid: {exc}") from exc
-    if compiled.groups < 2:
-        raise FirmwareLookupError("Vendor regex must have at least two capture groups")
+    if compiled.groups < 1:
+        raise FirmwareLookupError("Vendor regex must have at least one capture group")
 
 
 def validate_vendor_config(config: VendorConfig) -> None:
     validate_vendor_inputs(config.url_template, config.regex)
+    if config.fetch not in ("browser", "http"):
+        raise FirmwareLookupError("Vendor config fetch must be 'browser' or 'http'")
+    if config.select not in ("first", "last", "max"):
+        raise FirmwareLookupError("Vendor config select must be 'first', 'last', or 'max'")
 
 
 def _render_url(template: str, vendor_alias: str) -> str:

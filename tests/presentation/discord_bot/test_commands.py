@@ -1425,7 +1425,7 @@ async def test_set_vendor_firmware_rejects_invalid_regex():
     assert "invalid" in result.text.lower()
 
 
-async def test_set_vendor_firmware_rejects_missing_alias_placeholder():
+async def test_set_vendor_firmware_allows_missing_alias_placeholder():
     services = _services()
     result = await handle_set_vendor_firmware(
         services,
@@ -1434,4 +1434,4 @@ async def test_set_vendor_firmware_rejects_missing_alias_placeholder():
         attr_id="downloads",
         regex=r"(v[\d.]+).*(https://[^\"']+)",
     )
-    assert "{alias}" in result.text
+    assert "saved" in result.text.lower()

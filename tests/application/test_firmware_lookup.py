@@ -195,18 +195,33 @@ def test_lookup_rejects_non_https_download_url():
         service.lookup(1)
 
 
-def test_validate_vendor_config_rejects_bad_config():
+def test_validate_vendor_config_rejects_non_https():
     with pytest.raises(FirmwareLookupError, match="HTTPS"):
         validate_vendor_config(
-            VendorConfig(vendor="Canon", url_template="http://vendor.example/{alias}", attr_id="firmware", regex="(.+) (.+)")
+            VendorConfig(vendor="Canon", url_template="http://vendor.example/{alias}", regex="(.+)")
         )
 
-    with pytest.raises(FirmwareLookupError, match=r"\{alias\}"):
+
+def test_validate_vendor_config_allows_missing_alias_placeholder():
+    # {alias} is now optional; a fixed URL with one capture group is valid.
+    validate_vendor_config(
+        VendorConfig(vendor="Canon", url_template="https://vendor.example/releases", regex="(.+)")
+    )
+
+
+def test_validate_vendor_config_requires_at_least_one_group():
+    with pytest.raises(FirmwareLookupError, match="at least one capture group"):
         validate_vendor_config(
-            VendorConfig(vendor="Canon", url_template="https://vendor.example/downloads", attr_id="firmware", regex="(.+) (.+)")
+            VendorConfig(vendor="Canon", url_template="https://vendor.example/x", regex="no groups")
         )
 
-    with pytest.raises(FirmwareLookupError, match="at least two capture groups"):
+
+def test_validate_vendor_config_rejects_bad_fetch_and_select():
+    with pytest.raises(FirmwareLookupError, match="fetch"):
         validate_vendor_config(
-            VendorConfig(vendor="Canon", url_template="https://vendor.example/{alias}", attr_id="firmware", regex="(.+)")
+            VendorConfig(vendor="C", url_template="https://x", regex="(.+)", fetch="ftp")
+        )
+    with pytest.raises(FirmwareLookupError, match="select"):
+        validate_vendor_config(
+            VendorConfig(vendor="C", url_template="https://x", regex="(.+)", select="middle")
         )
