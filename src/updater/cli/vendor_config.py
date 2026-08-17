@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     remove = subparsers.add_parser("remove")
     remove.add_argument("--vendor", required=True)
+
+    subparsers.add_parser("seed")
     return parser
 
 
@@ -72,6 +74,17 @@ def main(argv: list[str] | None = None, *, repo=None) -> int:
                 return 0
             print(f"Vendor config not found: {args.vendor}", file=sys.stderr)
             return 1
+        if args.command == "seed":
+            from updater.infrastructure.mongo import MongoDatabase, MongoTargetRepository
+            from updater.infrastructure.seed.version_checks import seed as seed_version_checks
+
+            config = load_config(Path(args.env))
+            db = MongoDatabase(uri=config.mongodb_uri, database=config.mongodb_database)
+            counts = seed_version_checks(
+                MongoTargetRepository(db.db), MongoVendorConfigRepository(db.db)
+            )
+            print(f"Seeded {counts['targets']} targets and {counts['configs']} version checks.")
+            return 0
     except (ConfigError, FirmwareLookupError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
