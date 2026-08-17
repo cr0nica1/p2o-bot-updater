@@ -18,6 +18,7 @@ from updater.domain.models import (
     VendorConfig,
     Vulnerability,
     normalize_name,
+    utc_now,
 )
 
 
@@ -268,6 +269,50 @@ class MongoTargetVersionRepository:
 
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
+
+    def find_latest(self, target_id):
+        document = self.collection.find_one({"target_id": target_id, "is_latest": True})
+        return target_version_from_document(document) if document else None
+
+    def set_current(self, target_id, *, version, source_url, previous_version):
+        self.collection.update_many(
+            {"target_id": target_id, "is_latest": True},
+            {"$set": {"is_latest": False}},
+        )
+        now = utc_now()
+        document = self.collection.find_one_and_update(
+            {"target_id": target_id, "version": version, "version_type": None},
+            {
+                "$set": {
+                    "is_latest": True,
+                    "previous_version": previous_version,
+                    "source_url": source_url,
+                    "version_type": None,
+                    "last_seen_at": now,
+                    "raw": {},
+                },
+                "$setOnInsert": {"first_seen_at": now},
+            },
+            upsert=True,
+            return_document=_return_document_after(),
+        )
+        return target_version_from_document(document)
+
+    def mark_seen(self, target_id, *, version):
+        self.collection.update_one(
+            {"target_id": target_id, "version": version, "version_type": None},
+            {"$set": {"last_seen_at": utc_now()}},
+        )
+
+    def list_recent_changes(self, since):
+        cursor = self.collection.find(
+            {
+                "is_latest": True,
+                "previous_version": {"$ne": None},
+                "first_seen_at": {"$gte": since},
+            }
+        )
+        return [target_version_from_document(document) for document in cursor]
 
 
 class MongoVendorConfigRepository:
