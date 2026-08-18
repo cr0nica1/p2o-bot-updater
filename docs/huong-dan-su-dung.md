@@ -89,7 +89,7 @@ version-lookup --target-id 7        # lấy phiên bản 1 target theo số th�
 
 Không cần bật thêm gì — tính năng gắn sẵn vào lịch `sync/notify` có sẵn:
 
-1. Đến **`SYNC_TIME`**: bot quét cả 10 checker, lưu phiên bản vào DB.
+1. Đến **`SYNC_TIME`**: bot quét cả 10 checker, lưu phiên bản vào DB. Bước này **độc lập** với sync CVE — nếu sync CVE lỗi (NVD/ZDI sập, mạng lỗi…), phần quét version **vẫn chạy** bình thường.
 2. Đến **`NOTIFY_TIME`**: nếu có target đổi phiên bản, bot đăng vào `DISCORD_CHANNEL_ID`:
 
    ```

@@ -1313,6 +1313,41 @@ async def test_run_sync_returns_sync_start_timestamp():
     assert result is not None
     assert result.sync_started_at == sync_start
     assert result.sync_result.targets_processed == 1
+
+
+async def test_run_sync_scans_versions_even_when_cve_sync_fails():
+    from unittest.mock import patch
+
+    from updater.application.version_scan import VersionScanReport
+    from updater.presentation.discord_bot.bot import _run_sync
+
+    services = _services(target_repo=FakeTargetRepo([Target(id="t1", name="Canon")]), sources=[])
+    sentinel = VersionScanReport(changes=[], seeded=["Canon"], unchanged=[], errors=[])
+
+    class BoomSync:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def sync_all(self):
+            raise RuntimeError("NVD unreachable")
+
+    class OkScan:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def scan_all(self):
+            return sentinel
+
+    with patch(
+        "updater.presentation.discord_bot.bot.SyncVulnerabilitiesService", BoomSync
+    ), patch("updater.presentation.discord_bot.bot.VersionScanService", OkScan):
+        result = await _run_sync(services)
+
+    assert result is not None
+    assert result.sync_result is None
+    assert result.version_report is sentinel
+
+
 async def test_lookup_firmware_uses_stored_vendor_config():
     target = Target(id="t1", name="Canon MF654Cdw", vendor="Canon", vendor_alias="canon-mf654cdw")
     config = VendorConfig(

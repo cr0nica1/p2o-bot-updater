@@ -540,6 +540,8 @@ def _build_services(config: BotConfig) -> cmd.Services:
 async def _run_sync(services: cmd.Services) -> ScheduledSyncRun | None:
     log.info("scheduled sync starting")
     sync_started_at = datetime.now(timezone.utc)
+
+    result = None
     try:
         result = await asyncio.to_thread(
             SyncVulnerabilitiesService(
@@ -555,29 +557,34 @@ async def _run_sync(services: cmd.Services) -> ScheduledSyncRun | None:
             result.vulnerabilities_seen,
             len(result.errors),
         )
-        version_report = None
-        try:
-            lookup = FirmwareLookupService(
-                services.target_repo, services.vendor_config_repo, services.browser, services.http
-            )
-            version_report = await asyncio.to_thread(
-                VersionScanService(
-                    services.target_repo, services.vendor_config_repo,
-                    services.version_repo, lookup,
-                ).scan_all
-            )
-            log.info(
-                "scheduled version scan done changes=%d seeded=%d errors=%d",
-                len(version_report.changes), len(version_report.seeded), len(version_report.errors),
-            )
-        except Exception:
-            log.exception("scheduled version scan failed")
-        return ScheduledSyncRun(
-            sync_started_at=sync_started_at, sync_result=result, version_report=version_report,
-        )
     except Exception:
         log.exception("scheduled sync failed")
+
+    # The version scan is independent of the CVE sync: a CVE-sync failure must
+    # not skip the daily version scan/notify.
+    version_report = None
+    try:
+        lookup = FirmwareLookupService(
+            services.target_repo, services.vendor_config_repo, services.browser, services.http
+        )
+        version_report = await asyncio.to_thread(
+            VersionScanService(
+                services.target_repo, services.vendor_config_repo,
+                services.version_repo, lookup,
+            ).scan_all
+        )
+        log.info(
+            "scheduled version scan done changes=%d seeded=%d errors=%d",
+            len(version_report.changes), len(version_report.seeded), len(version_report.errors),
+        )
+    except Exception:
+        log.exception("scheduled version scan failed")
+
+    if result is None and version_report is None:
         return None
+    return ScheduledSyncRun(
+        sync_started_at=sync_started_at, sync_result=result, version_report=version_report,
+    )
 
 
 async def _run_notify(services: cmd.Services, channel, tz, *, sync_started_at: datetime | None = None) -> None:
