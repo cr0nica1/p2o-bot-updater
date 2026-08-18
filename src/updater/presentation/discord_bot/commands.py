@@ -21,6 +21,7 @@ from updater.application.firmware_lookup import (
 )
 from updater.application.import_targets import ImportTargetsService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
+from updater.application.version_scan import VersionScanService
 from updater.domain.models import Target, TargetVulnerability, VendorConfig, Vulnerability
 from updater.domain.repositories import (
     TargetRepository,
@@ -35,6 +36,7 @@ from updater.infrastructure.csv_loader import CsvTargetLoader
 from updater.presentation.discord_bot.config import ConfigError, update_schedule
 from updater.presentation.discord_bot.formatting import (
     build_finding_embed,
+    build_version_update_message,
     group_findings,
 )
 
@@ -674,3 +676,24 @@ async def handle_show_schedule(
             f"NOTIFY_TIME={notify_time[0]:02d}:{notify_time[1]:02d}"
         )
     )
+
+
+async def handle_scan_versions(services: Services) -> CommandResult:
+    lookup = FirmwareLookupService(
+        services.target_repo, services.vendor_config_repo, services.browser, services.http
+    )
+    scan = VersionScanService(
+        services.target_repo, services.vendor_config_repo, services.version_repo, lookup
+    )
+    report = await asyncio.to_thread(scan.scan_all)
+    today = datetime.now(UTC_PLUS_7).date()
+    footer = f"scanned {report.scanned}, {len(report.errors)} error(s)"
+    if report.errors:
+        failing = ", ".join(name for name, _ in report.errors)
+        if len(failing) > 200:
+            failing = failing[:197] + "..."
+        footer += f": {failing}"
+    if report.changes:
+        body = build_version_update_message(report_date=today, changes=report.changes)
+        return CommandResult(text=f"{body}\n{footer}")
+    return CommandResult(text=f"No version updates.\n{footer}")

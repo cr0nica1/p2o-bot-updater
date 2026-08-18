@@ -106,6 +106,14 @@ def build_summary_message(
     )
 
 
+def build_version_update_message(*, report_date: date, changes) -> str:
+    lines = [f"🔔 Version updates — {report_date.isoformat()}"]
+    for change in changes:
+        lines.append(f"• {change.target_name}: {change.old_version} → {change.new_version}")
+    lines.append(f"{len(changes)} update(s)")
+    return "\n".join(lines)
+
+
 def group_findings(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten an ExportService snapshot into a list of finding dicts for embedding."""
     findings: list[dict[str, Any]] = []

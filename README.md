@@ -300,6 +300,21 @@ version-config add --vendor Chroma --target Chroma \
 
 On Discord: `/set-version-check` and `/check-version`.
 
+#### Daily scan and update notifications
+
+The bot scans every target-bound version checker once per day, as part of the
+existing daily sync/notify schedule (`/set-schedule`, `/show-schedule`). When a
+target's version changes, it posts an update to the notify channel:
+
+```
+🔔 Version updates — 2026-08-18
+• Chroma: 1.5.9 → 1.6.0
+```
+
+The first scan of each target records a baseline silently (no notification);
+only later changes are announced. Run a scan on demand with `/scan-versions`
+(admin only).
+
 ### Development
 
 Run the full test suite:

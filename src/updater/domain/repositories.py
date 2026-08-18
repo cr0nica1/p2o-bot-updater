@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from updater.domain.models import Target, TargetVersion, TargetVulnerability, VendorConfig, Vulnerability
@@ -16,6 +17,12 @@ class TargetRepository(Protocol):
 class TargetVersionRepository(Protocol):
     def upsert(self, version: TargetVersion) -> TargetVersion: ...
     def delete_all(self) -> int: ...
+    def find_latest(self, target_id: str) -> TargetVersion | None: ...
+    def set_current(
+        self, target_id: str, *, version: str, source_url: str | None, previous_version: str | None
+    ) -> TargetVersion: ...
+    def mark_seen(self, target_id: str, *, version: str) -> None: ...
+    def list_recent_changes(self, since: datetime) -> list[TargetVersion]: ...
 
 
 class VendorConfigRepository(Protocol):

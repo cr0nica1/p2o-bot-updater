@@ -138,3 +138,21 @@ def test_group_findings_merges_same_vulnerability():
     assert len(findings) == 1
     assert findings[0]["target_names"] == ["Canon MF654Cdw", "Canon MF656Cdw"]
     assert findings[0]["advisory_id"] == "CVE-2024-12647"
+
+
+def test_build_version_update_message_lists_changes_and_count():
+    from datetime import date
+    from updater.application.version_scan import VersionChange
+    from updater.presentation.discord_bot.formatting import build_version_update_message
+
+    msg = build_version_update_message(
+        report_date=date(2026, 8, 18),
+        changes=[
+            VersionChange("Chroma", "1.5.9", "1.6.0", "u"),
+            VersionChange("LiteLLM", "v1.97.0", "v1.98.0", "u"),
+        ],
+    )
+    assert "🔔 Version updates — 2026-08-18" in msg
+    assert "• Chroma: 1.5.9 → 1.6.0" in msg
+    assert "• LiteLLM: v1.97.0 → v1.98.0" in msg
+    assert "2 update(s)" in msg

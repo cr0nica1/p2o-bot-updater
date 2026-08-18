@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 try:
@@ -18,6 +19,7 @@ from updater.domain.models import (
     VendorConfig,
     Vulnerability,
     normalize_name,
+    utc_now,
 )
 
 
@@ -62,6 +64,7 @@ def target_version_to_document(version: TargetVersion) -> dict[str, Any]:
         "release_date": version.release_date,
         "source_url": version.source_url,
         "is_latest": version.is_latest,
+        "previous_version": version.previous_version,
         "raw": dict(version.raw),
         "first_seen_at": version.first_seen_at,
         "last_seen_at": version.last_seen_at,
@@ -77,6 +80,7 @@ def target_version_from_document(document: dict[str, Any]) -> TargetVersion:
         release_date=document.get("release_date"),
         source_url=document.get("source_url"),
         is_latest=document.get("is_latest"),
+        previous_version=document.get("previous_version"),
         raw=dict(document.get("raw", {})),
         first_seen_at=document["first_seen_at"],
         last_seen_at=document["last_seen_at"],
@@ -266,6 +270,53 @@ class MongoTargetVersionRepository:
 
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
+
+    def find_latest(self, target_id: str) -> TargetVersion | None:
+        document = self.collection.find_one({"target_id": target_id, "is_latest": True})
+        return target_version_from_document(document) if document else None
+
+    def set_current(self, target_id: str, *, version: str, source_url: str | None, previous_version: str | None) -> TargetVersion:
+        self.collection.update_many(
+            {"target_id": target_id, "is_latest": True},
+            {"$set": {"is_latest": False}},
+        )
+        now = utc_now()
+        document = self.collection.find_one_and_update(
+            {"target_id": target_id, "version": version, "version_type": None},
+            {
+                "$set": {
+                    "is_latest": True,
+                    "previous_version": previous_version,
+                    "source_url": source_url,
+                    "version_type": None,
+                    "last_seen_at": now,
+                    "raw": {},
+                },
+                # first_seen_at is insert-only: a re-appearing version (downgrade/
+                # oscillation) keeps its original date, so list_recent_changes won't
+                # resurface it at notify time (downgrade alerting is out of scope).
+                "$setOnInsert": {"first_seen_at": now},
+            },
+            upsert=True,
+            return_document=_return_document_after(),
+        )
+        return target_version_from_document(document)
+
+    def mark_seen(self, target_id: str, *, version: str) -> None:
+        self.collection.update_one(
+            {"target_id": target_id, "version": version, "version_type": None},
+            {"$set": {"last_seen_at": utc_now()}},
+        )
+
+    def list_recent_changes(self, since: datetime) -> list[TargetVersion]:
+        cursor = self.collection.find(
+            {
+                "is_latest": True,
+                "previous_version": {"$ne": None},
+                "first_seen_at": {"$gte": since},
+            }
+        )
+        return [target_version_from_document(document) for document in cursor]
 
 
 class MongoVendorConfigRepository:

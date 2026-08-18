@@ -12,6 +12,7 @@ from updater.presentation.discord_bot.commands import (
     handle_list_targets,
     handle_lookup_firmware,
     handle_remove_target,
+    handle_scan_versions,
     handle_search_vulns,
     handle_set_schedule,
     handle_set_vendor_alias,
@@ -53,8 +54,9 @@ class FakeTargetRepo:
 
 
 class FakeVersionRepo:
-    def __init__(self):
+    def __init__(self, latest=None):
         self.calls = []
+        self.latest = dict(latest or {})
 
     def upsert(self, version):
         self.calls.append(version)
@@ -64,6 +66,19 @@ class FakeVersionRepo:
         deleted = len(self.calls)
         self.calls.clear()
         return deleted
+
+    def find_latest(self, target_id):
+        return self.latest.get(target_id)
+
+    def set_current(self, target_id, *, version, source_url, previous_version):
+        from updater.domain.models import TargetVersion
+        tv = TargetVersion(target_id=target_id, version=version, source_url=source_url,
+                           previous_version=previous_version, is_latest=True)
+        self.latest[target_id] = tv
+        return tv
+
+    def mark_seen(self, target_id, *, version):
+        pass
 
 
 class FakeVulnRepo:
@@ -1537,3 +1552,58 @@ async def test_check_version_uses_target_bound_http_config():
     result = await handle_lookup_firmware(services, target_id=1)
     assert "1.5.9" in result.text
     assert "Download" not in result.text
+
+
+def test_scan_versions_reports_no_updates_on_first_scan():
+    import asyncio
+    from updater.domain.models import Target, VendorConfig
+
+    target = Target(name="Chroma", id="c1")
+    config = VendorConfig(vendor="Chroma", target="Chroma",
+                          url_template="https://x/releases", fetch="http",
+                          regex=r"v(\d+\.\d+\.\d+)", select="first")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        version_repo=FakeVersionRepo(),
+        http=FakeHttpAdapter(html="release v1.6.0"),
+    )
+    result = asyncio.run(handle_scan_versions(services))
+    assert "No version updates." in result.text
+    assert "scanned 1" in result.text
+
+
+def test_scan_versions_reports_a_change():
+    import asyncio
+    from updater.domain.models import Target, TargetVersion, VendorConfig
+
+    target = Target(name="Chroma", id="c1")
+    config = VendorConfig(vendor="Chroma", target="Chroma",
+                          url_template="https://x/releases", fetch="http",
+                          regex=r"v(\d+\.\d+\.\d+)", select="first")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        version_repo=FakeVersionRepo(latest={"c1": TargetVersion(target_id="c1", version="1.5.9")}),
+        http=FakeHttpAdapter(html="release v1.6.0"),
+    )
+    result = asyncio.run(handle_scan_versions(services))
+    assert "• Chroma: 1.5.9 → 1.6.0" in result.text
+
+
+def test_scan_versions_footer_lists_failing_targets():
+    import asyncio
+    from updater.domain.models import Target, VendorConfig
+    target = Target(name="Chroma", id="c1")
+    config = VendorConfig(vendor="Chroma", target="Chroma",
+                          url_template="https://x/releases", fetch="http",
+                          regex=r"nomatch(\d+\.\d+\.\d+)", select="first")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        version_repo=FakeVersionRepo(),
+        http=FakeHttpAdapter(html="release v1.6.0"),
+    )
+    result = asyncio.run(handle_scan_versions(services))
+    assert "1 error(s)" in result.text
+    assert "Chroma" in result.text

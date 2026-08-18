@@ -42,6 +42,10 @@ class Target:
     def normalized_name(self) -> str:
         return normalize_name(self.name)
 
+    @property
+    def storage_id(self) -> str:
+        return self.id or self.normalized_name
+
     def search_queries(self) -> list[str]:
         return _unique_non_empty([self.name, *self.aliases])
 
@@ -54,6 +58,7 @@ class TargetVersion:
     release_date: datetime | None = None
     source_url: str | None = None
     is_latest: bool | None = None
+    previous_version: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
     id: str | None = None
     first_seen_at: datetime = field(default_factory=utc_now)
