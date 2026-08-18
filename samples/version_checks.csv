@@ -1,4 +1,11 @@
 target,vendor,url_template,fetch,selector,select,regex
 Philips Hue Bridge Pro,Philips Hue Bridge Pro,https://www.philips-hue.com/en-us/support/release-notes/bridge-pro,http,,first,Software version\s+(\d{10})
+Samsung Galaxy S26,Samsung Galaxy S26,https://security.samsungmobile.com/securityUpdate.smsb,http,,first,(?i)SMR[ -]((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-20\d{2}\s+Release\s+\d+)
+Home Assistant Green,Home Assistant Green,https://github.com/home-assistant/operating-system/releases,http,,first,"releases/tag/(\d+\.\d+(?:\.\d+)?)"""
 OpenAI Codex,OpenAI Codex,https://learn.chatgpt.com/docs/changelog?type=codex-cli,http,,first,@openai/codex@(\d+\.\d+\.\d+)
-Oracle Autonomous AI Database,Oracle Autonomous AI Database,https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/autonomous-ai-database-updates.html,http,,max,(?:Release Update\s+|release-update-)(\d+(?:\.\d+){1,2})
+Anthropic Claude Code,Anthropic Claude Code,https://code.claude.com/docs/en/changelog,http,,first,"data-component-part=""update-label""[^>]*>\s*(\d+\.\d+\.\d+)"
+Postgres pgvector,Postgres pgvector,https://github.com/pgvector/pgvector/blob/master/CHANGELOG.md,http,,first,##\s+(\d+\.\d+\.\d+)\s+\(\d{4}-\d{2}-\d{2}\)
+Oracle Autonomous AI Database,Oracle Autonomous AI Database,https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/autonomous-ai-database-updates.html,http,,max,"(?:Release Update\s+|release-update-)(\d+(?:\.\d+){1,2})"
+LiteLLM,LiteLLM,https://docs.litellm.ai/release_notes/,http,,first,"id=""?latest-release""?[\s\S]*?/release_notes/(v\d+\.\d+\.\d+)/"
+NVIDIA Dynamo,NVIDIA Dynamo,https://docs.nvidia.com/dynamo/reference/releases,http,,first,Latest\s*\((v\d+\.\d+\.\d+)\)
+Chroma,Chroma,https://github.com/chroma-core/chroma/releases,http,,first,"releases/tag/(\d+\.\d+\.\d+)(?=[""/#?])"
