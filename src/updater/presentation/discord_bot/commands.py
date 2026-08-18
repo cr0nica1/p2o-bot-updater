@@ -686,8 +686,13 @@ async def handle_scan_versions(services: Services) -> CommandResult:
         services.target_repo, services.vendor_config_repo, services.version_repo, lookup
     )
     report = await asyncio.to_thread(scan.scan_all)
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC_PLUS_7).date()
     footer = f"scanned {report.scanned}, {len(report.errors)} error(s)"
+    if report.errors:
+        failing = ", ".join(name for name, _ in report.errors)
+        if len(failing) > 200:
+            failing = failing[:197] + "..."
+        footer += f": {failing}"
     if report.changes:
         body = build_version_update_message(report_date=today, changes=report.changes)
         return CommandResult(text=f"{body}\n{footer}")

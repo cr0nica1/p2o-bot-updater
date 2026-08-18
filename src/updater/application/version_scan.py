@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from updater.application.firmware_lookup import FirmwareLookupError
 from updater.domain.models import Target, TargetVersion
@@ -92,3 +93,14 @@ def version_changes_from_docs(
             VersionChange(name, doc.previous_version or "", doc.version or "", doc.source_url or "")
         )
     return changes
+
+
+def notify_window_start(now: datetime) -> datetime:
+    """Start of the reporting window for scheduled version-update notifications.
+
+    A 24-hour lookback (not start-of-day): a change persisted by a scan that runs
+    later in the day than the notify time is still announced at the next notify.
+    FireTracker fires notify once per day, so each change is reported exactly once
+    under either sync/notify ordering.
+    """
+    return now - timedelta(hours=24)

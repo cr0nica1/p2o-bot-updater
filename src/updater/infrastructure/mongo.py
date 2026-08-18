@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 try:
@@ -270,11 +271,11 @@ class MongoTargetVersionRepository:
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
 
-    def find_latest(self, target_id):
+    def find_latest(self, target_id: str) -> TargetVersion | None:
         document = self.collection.find_one({"target_id": target_id, "is_latest": True})
         return target_version_from_document(document) if document else None
 
-    def set_current(self, target_id, *, version, source_url, previous_version):
+    def set_current(self, target_id: str, *, version: str, source_url: str | None, previous_version: str | None) -> TargetVersion:
         self.collection.update_many(
             {"target_id": target_id, "is_latest": True},
             {"$set": {"is_latest": False}},
@@ -291,6 +292,9 @@ class MongoTargetVersionRepository:
                     "last_seen_at": now,
                     "raw": {},
                 },
+                # first_seen_at is insert-only: a re-appearing version (downgrade/
+                # oscillation) keeps its original date, so list_recent_changes won't
+                # resurface it at notify time (downgrade alerting is out of scope).
                 "$setOnInsert": {"first_seen_at": now},
             },
             upsert=True,
@@ -298,13 +302,13 @@ class MongoTargetVersionRepository:
         )
         return target_version_from_document(document)
 
-    def mark_seen(self, target_id, *, version):
+    def mark_seen(self, target_id: str, *, version: str) -> None:
         self.collection.update_one(
             {"target_id": target_id, "version": version, "version_type": None},
             {"$set": {"last_seen_at": utc_now()}},
         )
 
-    def list_recent_changes(self, since):
+    def list_recent_changes(self, since: datetime) -> list[TargetVersion]:
         cursor = self.collection.find(
             {
                 "is_latest": True,

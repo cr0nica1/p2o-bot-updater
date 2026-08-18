@@ -128,3 +128,12 @@ def test_version_changes_from_docs_resolves_names_and_skips_unknown():
     ]
     changes = version_changes_from_docs(docs, targets)
     assert changes == [VersionChange("Chroma", "1.5.9", "1.6.0", "u")]
+
+
+def test_notify_window_start_is_24h_lookback():
+    from datetime import datetime, timezone
+    from updater.application.version_scan import notify_window_start
+    now = datetime(2026, 8, 18, 9, 0, tzinfo=timezone.utc)
+    # 24h back, NOT start-of-day (which would be 2026-08-18 00:00 and would drop
+    # a change first-seen the previous evening).
+    assert notify_window_start(now) == datetime(2026, 8, 17, 9, 0, tzinfo=timezone.utc)

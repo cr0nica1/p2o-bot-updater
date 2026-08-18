@@ -14,7 +14,7 @@ from discord.ext import tasks
 from updater.application.export_json import ExportService
 from updater.application.firmware_lookup import FirmwareLookupService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
-from updater.application.version_scan import VersionScanService, version_changes_from_docs
+from updater.application.version_scan import VersionScanService, version_changes_from_docs, notify_window_start
 from updater.infrastructure.browser.cloak import CloakBrowserAdapter
 from updater.infrastructure.browser.http_fetch import HttpFetchAdapter
 from updater.infrastructure.mongo import (
@@ -616,14 +616,13 @@ async def _run_notify(services: cmd.Services, channel, tz, *, sync_started_at: d
             log.exception("scheduled notify: finding send failed advisory=%s", finding.get("advisory_id"))
 
     try:
-        report_date = datetime.now(tz).date()
-        window_start = datetime(report_date.year, report_date.month, report_date.day, tzinfo=tz)
-        recent = await asyncio.to_thread(services.version_repo.list_recent_changes, window_start)
+        now = datetime.now(tz)
+        recent = await asyncio.to_thread(services.version_repo.list_recent_changes, notify_window_start(now))
         targets = await asyncio.to_thread(services.target_repo.list_all)
         version_changes = version_changes_from_docs(recent, targets)
         if version_changes:
             await channel.send(
-                content=build_version_update_message(report_date=report_date, changes=version_changes)
+                content=build_version_update_message(report_date=now.date(), changes=version_changes)
             )
     except Exception:
         log.exception("scheduled notify: version section failed")

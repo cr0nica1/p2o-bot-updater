@@ -1589,3 +1589,21 @@ def test_scan_versions_reports_a_change():
     )
     result = asyncio.run(handle_scan_versions(services))
     assert "• Chroma: 1.5.9 → 1.6.0" in result.text
+
+
+def test_scan_versions_footer_lists_failing_targets():
+    import asyncio
+    from updater.domain.models import Target, VendorConfig
+    target = Target(name="Chroma", id="c1")
+    config = VendorConfig(vendor="Chroma", target="Chroma",
+                          url_template="https://x/releases", fetch="http",
+                          regex=r"nomatch(\d+\.\d+\.\d+)", select="first")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vendor_config_repo=FakeVendorConfigRepo([config]),
+        version_repo=FakeVersionRepo(),
+        http=FakeHttpAdapter(html="release v1.6.0"),
+    )
+    result = asyncio.run(handle_scan_versions(services))
+    assert "1 error(s)" in result.text
+    assert "Chroma" in result.text
