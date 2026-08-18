@@ -131,7 +131,7 @@ Khác với version, mọi cách nạp CVE hiện có đều khiến bot **đăn
 **Cách nạp DB vuln im lặng** — gọi thẳng `sync_all()`, không dựng Discord client:
 
 ```bash
-cd /home/minhht21/Documents/p2o-bot-updater
+cd /path/to/p2o-bot-updater
 python3 - <<'PY'
 from updater.infrastructure.mongo import (
     MongoDatabase, MongoTargetRepository,
