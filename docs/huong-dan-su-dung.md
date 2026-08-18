@@ -5,6 +5,7 @@ nhất của từng target) và **quét hàng ngày + thông báo Discord** khi 
 
 - Lấy phiên bản **theo yêu cầu** (on-demand): CLI `version-lookup` hoặc lệnh Discord `/check-version`.
 - **Tự động hàng ngày**: bot quét toàn bộ checker theo lịch, chỉ **thông báo khi có thay đổi**.
+- **Khởi tạo CSDL không gây thông báo**: xem [mục 6](#6-khởi-tạo-cơ-sở-dữ-liệu-mà-không-để-bot-thông-báo) — DB version im lặng sẵn, DB lỗ hổng (CVE) cần thao tác riêng.
 
 ---
 
@@ -107,7 +108,62 @@ Quản lý lịch:
 
 ---
 
-## 6. Thêm / sửa / xóa checker
+## 6. Khởi tạo cơ sở dữ liệu mà không để bot thông báo
+
+Hệ thống có **hai** cơ sở dữ liệu và chúng hành xử **khác nhau** khi khởi tạo.
+
+### 6.1. DB phiên bản (version) — mặc định đã im lặng ✅
+
+- `version-config seed` **không** lấy phiên bản, chỉ nạp target + checker → không có gì đăng lên Discord.
+- Lần quét **đầu tiên** của mỗi target chỉ ghi mốc nền (baseline) với `previous_version = None`; truy vấn thông báo (`list_recent_changes`) loại bỏ các bản ghi này → **không thông báo**. Chỉ các lần **đổi phiên bản về sau** mới được báo.
+- Để tạo baseline hoàn toàn im lặng: cứ để vòng quét theo lịch (`_run_sync` lúc `SYNC_TIME`) chạy một lần — nó ghi baseline, còn bước `notify` sẽ không đăng gì. (Chạy `/scan-versions` cũng ghi baseline, nhưng có trả về một dòng `No version updates. scanned N…` cho đúng người gõ lệnh.)
+
+> Kết luận: **khởi tạo DB version luôn im lặng.** Không cần làm gì thêm.
+
+### 6.2. DB lỗ hổng (vuln / CVE) — KHÔNG im lặng ⚠️
+
+Khác với version, mọi cách nạp CVE hiện có đều khiến bot **đăng findings**:
+
+- **Không có CLI** để sync CVE (`[project.scripts]` chỉ có `updater-bot`, `firmware-lookup`, `vendor-config`).
+- **`/sync-cves`**: chạy sync rồi trả về một embed cho **mỗi** finding. Trên DB rỗng, mọi CVE đều "tạo mới" trong lần sync đó → đăng **toàn bộ** vào kênh gõ lệnh.
+- **Sync/notify theo lịch**: `_run_notify` **luôn** đăng một dòng tóm tắt + một embed mỗi finding. Nó chỉ lọc "tạo mới từ lúc sync" khi `notify` **cùng tick** với `sync`; với cấu hình khuyến nghị (`SYNC_TIME` ≠ `NOTIFY_TIME`) thì **không lọc** → đăng nguyên toàn bộ DB. Vì vậy lần `notify` đầu tiên sau khi DB có dữ liệu sẽ đăng hàng loạt lên `DISCORD_CHANNEL_ID`.
+
+**Cách nạp DB vuln im lặng** — gọi thẳng `sync_all()`, không dựng Discord client:
+
+```bash
+cd /home/minhht21/Documents/p2o-bot-updater
+python3 - <<'PY'
+from updater.infrastructure.mongo import (
+    MongoDatabase, MongoTargetRepository,
+    MongoTargetVulnerabilityRepository, MongoVulnerabilityRepository,
+)
+from updater.infrastructure.sources.nvd import NvdSource
+from updater.infrastructure.sources.zdi import ZdiSource
+from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
+
+db = MongoDatabase(uri="mongodb://localhost:27017", database="p2o")
+sync = SyncVulnerabilitiesService(
+    MongoTargetRepository(db.db),
+    MongoVulnerabilityRepository(db.db),
+    MongoTargetVulnerabilityRepository(db.db),
+    [NvdSource(), ZdiSource()],
+)
+r = sync.sync_all()
+print("done:", r.targets_processed, "targets,", r.vulnerabilities_seen, "CVEs")
+PY
+```
+
+Script này **không gửi gì lên Discord** — DB được nạp yên lặng tại thời điểm chạy.
+
+> ⚠️ **Bẫy:** vòng `notify` theo lịch **đầu tiên** vẫn sẽ đăng toàn bộ snapshot (nó dựng lại findings từ cả DB, không phải delta). Muốn tránh luôn cú đó, làm **một** trong hai:
+> - Chạy script **trước khi** thêm bot vào kênh thật / trước khi đặt `DISCORD_CHANNEL_ID`; hoặc
+> - Tạm trỏ `DISCORD_CHANNEL_ID` sang **kênh test riêng** cho chu kỳ `notify` đầu, rồi đổi lại kênh thật.
+
+Tính năng CVE **không** có "baseline im lặng" như version — `notify` vốn được thiết kế để **báo cáo findings hàng ngày**. Muốn nó chỉ báo **CVE mới** về sau (thay vì đăng lại toàn bộ) thì cần **sửa code**, nằm ngoài phạm vi bản hướng dẫn này.
+
+---
+
+## 7. Thêm / sửa / xóa checker
 
 ### Thêm hoặc ghi đè (CLI)
 ```bash
@@ -133,7 +189,7 @@ version-config remove --vendor Chroma
 
 ---
 
-## 7. Quy tắc `regex` và `select`
+## 8. Quy tắc `regex` và `select`
 
 - **`regex`**: phải có **ít nhất 1 nhóm bắt** `( ... )`; **nhóm 1** là chuỗi phiên bản.
   URL bắt buộc **HTTPS**.
@@ -145,7 +201,7 @@ version-config remove --vendor Chroma
 
 ---
 
-## 8. Xử lý sự cố (Troubleshooting)
+## 9. Xử lý sự cố (Troubleshooting)
 
 | Hiện tượng | Nguyên nhân thường gặp | Cách xử lý |
 |-----------|------------------------|-----------|
@@ -154,10 +210,11 @@ version-config remove --vendor Chroma
 | Không nhận được thông báo dù có bản mới | `NOTIFY_TIME` đặt **sớm hơn** `SYNC_TIME` | Đặt `NOTIFY_TIME ≥ SYNC_TIME` (cửa sổ báo là 24h gần nhất nên vòng kế tiếp vẫn báo) |
 | `regex` không khớp | Trang nguồn đổi HTML | Cập nhật `regex` bằng `version-config add` / `/set-version-check` |
 | Target bị trùng lặp | Vừa `seed` vừa import CSV với tên khác nhau | Dùng đúng một bộ tên chuẩn (file mẫu đã được canh khớp) |
+| Bot đăng loạt CVE ngay lần đầu chạy | DB lỗ hổng rỗng → sync đầu coi mọi CVE là "mới"; `notify` đăng toàn bộ snapshot | Nạp DB vuln im lặng bằng script ở [mục 6.2](#62-db-lỗ-hổng-vuln--cve--không-im-lặng) và kiểm soát kênh cho chu kỳ `notify` đầu |
 
 ---
 
-## 9. Tóm tắt lệnh
+## 10. Tóm tắt lệnh
 
 **CLI**
 | Lệnh | Chức năng |
