@@ -12,7 +12,9 @@ from discord import app_commands
 from discord.ext import tasks
 
 from updater.application.export_json import ExportService
+from updater.application.firmware_lookup import FirmwareLookupService
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
+from updater.application.version_scan import VersionScanService, version_changes_from_docs
 from updater.infrastructure.browser.cloak import CloakBrowserAdapter
 from updater.infrastructure.browser.http_fetch import HttpFetchAdapter
 from updater.infrastructure.mongo import (
@@ -30,6 +32,7 @@ from updater.presentation.discord_bot.config import BotConfig, ConfigError, load
 from updater.presentation.discord_bot.formatting import (
     build_finding_embed,
     build_summary_message,
+    build_version_update_message,
     group_findings,
 )
 from updater.presentation.discord_bot.permissions import has_admin_role
@@ -127,6 +130,7 @@ async def _resolve_channel(client, channel_id: int):
 class ScheduledSyncRun:
     sync_started_at: datetime
     sync_result: object
+    version_report: object = None
 
 
 def build_client(config: BotConfig) -> discord.Client:
@@ -380,6 +384,29 @@ def build_client(config: BotConfig) -> discord.Client:
 
         asyncio.create_task(_run_manual_sync())
 
+    @tree.command(name="scan-versions", description="Scan all version checkers now", guild=guild)
+    async def scan_versions(interaction: discord.Interaction):
+        if not await _admin_only(interaction):
+            return
+        channel = interaction.channel
+        if channel is None:
+            await interaction.response.send_message("Cannot run scan outside a channel.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Version scan started. Results will be posted in this channel when complete.",
+            ephemeral=True,
+        )
+
+        async def _run_manual_scan() -> None:
+            try:
+                result = await cmd.handle_scan_versions(services)
+                await _send_command_result(channel.send, result)
+            except Exception:
+                log.exception("manual version scan failed")
+                await channel.send("Manual version scan failed. Check bot logs for details.")
+
+        asyncio.create_task(_run_manual_scan())
+
     @tree.command(name="search-vulns", description="Search stored vulnerabilities", guild=guild)
     @app_commands.describe(
         severity="Optional severity filter (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL, NONE)",
@@ -528,7 +555,26 @@ async def _run_sync(services: cmd.Services) -> ScheduledSyncRun | None:
             result.vulnerabilities_seen,
             len(result.errors),
         )
-        return ScheduledSyncRun(sync_started_at=sync_started_at, sync_result=result)
+        version_report = None
+        try:
+            lookup = FirmwareLookupService(
+                services.target_repo, services.vendor_config_repo, services.browser, services.http
+            )
+            version_report = await asyncio.to_thread(
+                VersionScanService(
+                    services.target_repo, services.vendor_config_repo,
+                    services.version_repo, lookup,
+                ).scan_all
+            )
+            log.info(
+                "scheduled version scan done changes=%d seeded=%d errors=%d",
+                len(version_report.changes), len(version_report.seeded), len(version_report.errors),
+            )
+        except Exception:
+            log.exception("scheduled version scan failed")
+        return ScheduledSyncRun(
+            sync_started_at=sync_started_at, sync_result=result, version_report=version_report,
+        )
     except Exception:
         log.exception("scheduled sync failed")
         return None
@@ -568,6 +614,19 @@ async def _run_notify(services: cmd.Services, channel, tz, *, sync_started_at: d
             await channel.send(embed=build_finding_embed(finding))
         except Exception:
             log.exception("scheduled notify: finding send failed advisory=%s", finding.get("advisory_id"))
+
+    try:
+        report_date = datetime.now(tz).date()
+        window_start = datetime(report_date.year, report_date.month, report_date.day, tzinfo=tz)
+        recent = await asyncio.to_thread(services.version_repo.list_recent_changes, window_start)
+        targets = await asyncio.to_thread(services.target_repo.list_all)
+        version_changes = version_changes_from_docs(recent, targets)
+        if version_changes:
+            await channel.send(
+                content=build_version_update_message(report_date=report_date, changes=version_changes)
+            )
+    except Exception:
+        log.exception("scheduled notify: version section failed")
 
 
 def main(argv: list[str] | None = None) -> int:
