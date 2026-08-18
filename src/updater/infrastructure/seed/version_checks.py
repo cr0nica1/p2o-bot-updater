@@ -35,6 +35,9 @@ _CHECKS = [
     ("Chroma", "AI infrastructure",
      "https://github.com/chroma-core/chroma/releases",
      "first", r'releases/tag/(\d+\.\d+\.\d+)(?=["/#?])'),
+    ("Oura Ring 5", "Wellness",
+     "https://support.ouraring.com/hc/en-us/articles/34036777934227-Oura-Device-Firmware-Versions",
+     "first", r"Oura Ring 5 Firmware Versions</strong></h2>[\s\S]*?<strong>(\d+\.\d+\.\d+)</strong>"),
 ]
 
 

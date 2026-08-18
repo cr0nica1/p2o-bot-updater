@@ -34,11 +34,11 @@ TIMEZONE=Asia/Ho_Chi_Minh
 ## 2. Nạp dữ liệu (target + checker)
 
 ### Cách nhanh nhất — `seed`
-Lệnh `seed` nạp **cả 10 target lẫn 10 version checker** với đúng tên chuẩn:
+Lệnh `seed` nạp **cả 11 target lẫn 11 version checker** với đúng tên chuẩn:
 
 ```bash
 version-config seed
-# → "Seeded 10 targets and 10 version checks."
+# → "Seeded 11 targets and 11 version checks."
 ```
 
 ### Hoặc import từ file mẫu qua Discord
@@ -50,7 +50,7 @@ version-config seed
 
 ---
 
-## 3. Danh sách 10 target đã cấu hình
+## 3. Danh sách 11 target đã cấu hình
 
 | # | Target | `select` | URL nguồn |
 |---|--------|----------|-----------|
@@ -64,9 +64,15 @@ version-config seed
 | 8 | LiteLLM | first | https://docs.litellm.ai/release_notes/ |
 | 9 | NVIDIA Dynamo | first | https://docs.nvidia.com/dynamo/reference/releases |
 | 10 | Chroma | first | https://github.com/chroma-core/chroma/releases |
+| 11 | Oura Ring 5 | first | https://support.ouraring.com/hc/en-us/articles/34036777934227-Oura-Device-Firmware-Versions |
 
-> `Oura Ring 5` (và các thiết bị Wellness khác) hiện **chưa có checker** — vòng quét
-> hàng ngày sẽ bỏ qua, `/check-version` sẽ báo "No firmware vendor config found".
+> Cả **11** target trên đều đã có checker. Nếu về sau bạn thêm target mới mà **chưa**
+> cấu hình checker, vòng quét hàng ngày sẽ bỏ qua và `/check-version` sẽ báo
+> "No firmware vendor config found".
+>
+> Trang firmware của Oura liệt kê nhiều thiết bị (Ring 5, Ring 4, Gen3, Gen2); regex
+> đã **neo vào đúng mục "Oura Ring 5 Firmware Versions"** nên chỉ lấy phiên bản của
+> Ring 5, bỏ qua các dòng thiết bị khác.
 
 ---
 
@@ -81,7 +87,7 @@ version-lookup --target-id 7        # lấy phiên bản 1 target theo số th�
 ### Dùng Discord
 - `/list-targets` — xem **số thứ tự** của từng target.
 - `/check-version target_id:7` — kiểm tra ngay 1 target.
-- `/scan-versions` — quét **toàn bộ** 10 checker ngay và đăng các thay đổi (chỉ admin).
+- `/scan-versions` — quét **toàn bộ** 11 checker ngay và đăng các thay đổi (chỉ admin).
 
 ---
 
@@ -89,7 +95,7 @@ version-lookup --target-id 7        # lấy phiên bản 1 target theo số th�
 
 Không cần bật thêm gì — tính năng gắn sẵn vào lịch `sync/notify` có sẵn:
 
-1. Đến **`SYNC_TIME`**: bot quét cả 10 checker, lưu phiên bản vào DB. Bước này **độc lập** với sync CVE — nếu sync CVE lỗi (NVD/ZDI sập, mạng lỗi…), phần quét version **vẫn chạy** bình thường.
+1. Đến **`SYNC_TIME`**: bot quét cả 11 checker, lưu phiên bản vào DB. Bước này **độc lập** với sync CVE — nếu sync CVE lỗi (NVD/ZDI sập, mạng lỗi…), phần quét version **vẫn chạy** bình thường.
 2. Đến **`NOTIFY_TIME`**: nếu có target đổi phiên bản, bot đăng vào `DISCORD_CHANNEL_ID`:
 
    ```
@@ -219,7 +225,7 @@ version-config remove --vendor Chroma
 **CLI**
 | Lệnh | Chức năng |
 |------|-----------|
-| `version-config seed` | Nạp 10 target + 10 checker |
+| `version-config seed` | Nạp 11 target + 11 checker |
 | `version-config list` | Liệt kê checker |
 | `version-config add ...` | Thêm/ghi đè checker |
 | `version-config remove --vendor X` | Xóa checker |

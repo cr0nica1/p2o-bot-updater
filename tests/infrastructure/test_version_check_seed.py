@@ -18,6 +18,7 @@ EXPECTED = {
     "LiteLLM": ("litellm.html", "v1.97.0"),
     "NVIDIA Dynamo": ("dynamo.html", "v1.4.0"),
     "Chroma": ("chroma.html", "1.5.9"),
+    "Oura Ring 5": ("oura.html", "2.1.3"),
 }
 
 
@@ -30,8 +31,8 @@ def test_seed_regex_extracts_expected_version_from_fixture(config):
     assert match.group(1).strip() == expected
 
 
-def test_seed_covers_all_ten_targets():
-    assert len(version_checks()) == 10
+def test_seed_covers_all_targets():
+    assert len(version_checks()) == 11
     assert {t.name for t in targets()} == set(EXPECTED)
 
 
@@ -47,6 +48,6 @@ class _Repo:
 def test_seed_upserts_targets_and_configs():
     target_repo, config_repo = _Repo(), _Repo()
     counts = seed(target_repo, config_repo)
-    assert counts == {"targets": 10, "configs": 10}
-    assert len(target_repo.items) == 10
-    assert len(config_repo.items) == 10
+    assert counts == {"targets": 11, "configs": 11}
+    assert len(target_repo.items) == 11
+    assert len(config_repo.items) == 11
