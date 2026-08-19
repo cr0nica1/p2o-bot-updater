@@ -23,10 +23,11 @@ DISCORD_GUILD_ID=...              # ID server Discord
 DISCORD_CHANNEL_ID=...            # kênh nhận thông báo cập nhật
 DISCORD_ADMIN_ROLE_ID=...         # role được phép chạy lệnh admin
 MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=p2o
+MONGODB_DATABASE=pwn2own_updater
 SYNC_TIME=08:00                   # giờ quét dữ liệu (gồm cả quét version)
 NOTIFY_TIME=09:00                 # giờ gửi thông báo — nên đặt ≥ SYNC_TIME
-TIMEZONE=Asia/Ho_Chi_Minh
+TIMEZONE=UTC+7                    # không dùng tên IANA (vd Asia/Ho_Chi_Minh)
+NVD_API_KEY=                      # tuỳ chọn — xác thực NVD, tăng hạn mức
 ```
 
 ---
@@ -34,39 +35,60 @@ TIMEZONE=Asia/Ho_Chi_Minh
 ## 2. Nạp dữ liệu (target + checker)
 
 ### Cách nhanh nhất — `seed`
-Lệnh `seed` nạp **cả 10 target lẫn 10 version checker** với đúng tên chuẩn:
+Lệnh `seed` nạp **11 target và 10 version checker** với đúng tên chuẩn,
+kèm alias CVE và `search_names` (Chroma chỉ query NVD bằng `ChromaDB`):
 
 ```bash
 version-config seed
-# → "Seeded 10 targets and 10 version checks."
+# → "Seeded 11 targets and 10 version checks."
 ```
+
+### Sau khi deploy / sửa dữ liệu cũ
+Chạy lần lượt:
+
+```bash
+version-config seed
+version-config purge-chroma
+```
+
+Rồi nạp lại CVE cho các target vừa thêm alias / đổi query:
+
+- Discord: `/sync-cves` với `target` lần lượt **Anthropic Claude Code**,
+  **Postgres pgvector**, **Philips Hue Bridge Pro**, **Home Assistant Green**,
+  **Chroma**;
+- hoặc gọi `SyncVulnerabilitiesService.sync_one(...)` từ Python (không gửi Discord).
+
+Query NVD của Chroma **chỉ** là `ChromaDB` (`search_names` ghi đè name + aliases).
 
 ### Hoặc import từ file mẫu qua Discord
 - `/import-targets` — đính kèm `samples/targets.csv`
 - `/import-vendor-firmware` — đính kèm `samples/version_checks.csv`
 
+> `samples/version_checks.csv` **phải khớp seed**: 10 checker, **không** có
+> hàng Samsung SMR, pgvector dùng URL `raw.githubusercontent.com`, có Oura Ring 5.
 > Tên target trong hai file mẫu đã được chỉnh cho **khớp nhau và khớp với seed**,
 > nên seed + import không tạo target trùng lặp.
 
 ---
 
-## 3. Danh sách 10 target đã cấu hình
+## 3. Danh sách 10 version checker (11 target)
 
 | # | Target | `select` | URL nguồn |
 |---|--------|----------|-----------|
 | 1 | Philips Hue Bridge Pro | first | https://www.philips-hue.com/en-us/support/release-notes/bridge-pro |
-| 2 | Samsung Galaxy S26 | first | https://security.samsungmobile.com/securityUpdate.smsb |
-| 3 | Home Assistant Green | first | https://github.com/home-assistant/operating-system/releases |
-| 4 | OpenAI Codex | first | https://learn.chatgpt.com/docs/changelog?type=codex-cli |
-| 5 | Anthropic Claude Code | first | https://code.claude.com/docs/en/changelog |
-| 6 | Postgres pgvector | first | https://github.com/pgvector/pgvector/blob/master/CHANGELOG.md |
-| 7 | Oracle Autonomous AI Database | max | https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/autonomous-ai-database-updates.html |
-| 8 | LiteLLM | first | https://docs.litellm.ai/release_notes/ |
-| 9 | NVIDIA Dynamo | first | https://docs.nvidia.com/dynamo/reference/releases |
-| 10 | Chroma | first | https://github.com/chroma-core/chroma/releases |
+| 2 | Home Assistant Green | first | https://github.com/home-assistant/operating-system/releases |
+| 3 | OpenAI Codex | first | https://learn.chatgpt.com/docs/changelog?type=codex-cli |
+| 4 | Anthropic Claude Code | first | https://code.claude.com/docs/en/changelog |
+| 5 | Postgres pgvector | first | https://raw.githubusercontent.com/pgvector/pgvector/master/CHANGELOG.md |
+| 6 | Oracle Autonomous AI Database | max | https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/autonomous-ai-database-updates.html |
+| 7 | LiteLLM | first | https://docs.litellm.ai/release_notes/ |
+| 8 | NVIDIA Dynamo | first | https://docs.nvidia.com/dynamo/reference/releases |
+| 9 | Chroma | first | https://github.com/chroma-core/chroma/releases |
+| 10 | Oura Ring 5 | first | https://support.ouraring.com/hc/en-us/articles/34036777934227-Oura-Device-Firmware-Versions |
 
-> `Oura Ring 5` (và các thiết bị Wellness khác) hiện **chưa có checker** — vòng quét
-> hàng ngày sẽ bỏ qua, `/check-version` sẽ báo "No firmware vendor config found".
+> **Samsung Galaxy S26** vẫn là target CVE nhưng **không có version checker**
+> (trang SMR toàn cục không phải firmware S26). Vòng quét hàng ngày **bỏ qua**;
+> `/check-version` báo "No firmware vendor config found".
 
 ---
 
@@ -141,7 +163,7 @@ from updater.infrastructure.sources.nvd import NvdSource
 from updater.infrastructure.sources.zdi import ZdiSource
 from updater.application.sync_vulnerabilities import SyncVulnerabilitiesService
 
-db = MongoDatabase(uri="mongodb://localhost:27017", database="p2o")
+db = MongoDatabase(uri="mongodb://localhost:27017", database="pwn2own_updater")
 sync = SyncVulnerabilitiesService(
     MongoTargetRepository(db.db),
     MongoVulnerabilityRepository(db.db),
@@ -205,11 +227,12 @@ version-config remove --vendor Chroma
 
 | Hiện tượng | Nguyên nhân thường gặp | Cách xử lý |
 |-----------|------------------------|-----------|
-| `/check-version` báo "No firmware vendor config found" | Tên target không khớp `target` của checker (vd "Dynamo" vs "NVIDIA Dynamo"), hoặc target chưa có checker | Đổi tên target cho khớp, hoặc `/set-version-check` với `target` đúng tên |
+| `/check-version` báo "No firmware vendor config found" | Tên target không khớp `target` của checker (vd "Dynamo" vs "NVIDIA Dynamo"), hoặc target chưa có checker (Samsung Galaxy S26 **cố ý** không có) | Đổi tên target cho khớp, hoặc `/set-version-check` với `target` đúng tên — trừ S26 |
 | Target không xuất hiện trong thông báo hàng ngày | Lần quét đầu (baseline im lặng), hoặc phiên bản không đổi, hoặc target chưa có checker | Bình thường — chỉ báo khi có thay đổi thật |
 | Không nhận được thông báo dù có bản mới | `NOTIFY_TIME` đặt **sớm hơn** `SYNC_TIME` | Đặt `NOTIFY_TIME ≥ SYNC_TIME` (cửa sổ báo là 24h gần nhất nên vòng kế tiếp vẫn báo) |
 | `regex` không khớp | Trang nguồn đổi HTML | Cập nhật `regex` bằng `version-config add` / `/set-version-check` |
-| Target bị trùng lặp | Vừa `seed` vừa import CSV với tên khác nhau | Dùng đúng một bộ tên chuẩn (file mẫu đã được canh khớp) |
+| Target bị trùng lặp | Vừa `seed` vừa import CSV với tên khác nhau | Dùng đúng một bộ tên chuẩn (file mẫu đã được canh khớp; CSV checker không được chứa Samsung SMR) |
+| Chroma gắn CVE không liên quan (FFmpeg, Razer…) | Query cũ dùng từ `"Chroma"` | `version-config seed` (search_names=`ChromaDB`) rồi `version-config purge-chroma` |
 | Bot đăng loạt CVE ngay lần đầu chạy | DB lỗ hổng rỗng → sync đầu coi mọi CVE là "mới"; `notify` đăng toàn bộ snapshot | Nạp DB vuln im lặng bằng script ở [mục 6.2](#62-db-lỗ-hổng-vuln--cve--không-im-lặng) và kiểm soát kênh cho chu kỳ `notify` đầu |
 
 ---
@@ -219,7 +242,8 @@ version-config remove --vendor Chroma
 **CLI**
 | Lệnh | Chức năng |
 |------|-----------|
-| `version-config seed` | Nạp 10 target + 10 checker |
+| `version-config seed` | Nạp 11 target + 10 checker (xoá checker Samsung S26 nếu còn) |
+| `version-config purge-chroma` | Gỡ link Chroma không phải ChromaDB |
 | `version-config list` | Liệt kê checker |
 | `version-config add ...` | Thêm/ghi đè checker |
 | `version-config remove --vendor X` | Xóa checker |
