@@ -30,6 +30,7 @@ def _unique_non_empty(values: list[str]) -> list[str]:
 class Target:
     name: str
     aliases: list[str] = field(default_factory=list)
+    search_names: list[str] = field(default_factory=list)
     vendor: str | None = None
     vendor_alias: str | None = None
     category: str | None = None
@@ -47,6 +48,8 @@ class Target:
         return self.id or self.normalized_name
 
     def search_queries(self) -> list[str]:
+        if self.search_names:
+            return _unique_non_empty(self.search_names)
         return _unique_non_empty([self.name, *self.aliases])
 
 

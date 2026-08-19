@@ -19,6 +19,16 @@ def test_target_search_queries_include_name_and_unique_aliases():
     assert target.search_queries() == ["Adobe Acrobat Reader", "Adobe Reader"]
 
 
+def test_search_queries_use_search_names_when_set():
+    target = Target(name="Chroma", aliases=["unused"], search_names=["ChromaDB"])
+    assert target.search_queries() == ["ChromaDB"]
+
+
+def test_search_queries_fall_back_to_name_and_aliases():
+    target = Target(name="LiteLLM", aliases=["Lite LLM"])
+    assert target.search_queries() == ["LiteLLM", "Lite LLM"]
+
+
 def test_zdi_vulnerability_prefers_cve_and_keeps_zdi_alias():
     vuln = Vulnerability.from_source(
         source="zdi",
