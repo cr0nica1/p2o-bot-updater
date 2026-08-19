@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
-from typing import Any, Callable
+from datetime import date, datetime, timedelta
+from typing import Any
 
 import requests
 
 from updater.domain.models import Target, Vulnerability
 
 NVD_CVES_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NVD_WINDOW_DAYS = 119
+
+
+def nvd_pub_windows(since_year: int, *, today: date | None = None) -> list[tuple[str, str]]:
+    today = today or date.today()
+    start = date(since_year, 1, 1)
+    if start > today:
+        return []
+    windows: list[tuple[str, str]] = []
+    cursor = start
+    while cursor <= today:
+        end = min(cursor + timedelta(days=NVD_WINDOW_DAYS), today)
+        windows.append(
+            (f"{cursor.isoformat()}T00:00:00.000", f"{end.isoformat()}T23:59:59.999")
+        )
+        cursor = end + timedelta(days=1)
+    return windows
 
 
 def normalize_nvd_item(item: dict[str, Any]) -> Vulnerability:
@@ -133,31 +150,45 @@ def strip_non_nist_cvss_metrics(item: dict[str, Any]) -> dict[str, Any]:
 class NvdSource:
     source_name: str = "nvd"
 
-    def __init__(
-        self,
-        *,
-        get: Callable[..., Any] | None = None,
-        api_key: str | None = None,
-    ) -> None:
+    def __init__(self, *, get=None, api_key=None, pause=None):
         self._get = get or requests.get
         self._api_key = api_key
+        if pause is not None:
+            self._pause = pause
+        elif get is None:
+            import time
+            self._pause = time.sleep
+        else:
+            self._pause = None
 
     def search(
-        self, _target: Target, query: str, since_year: int | None = None
+        self,
+        _target: Target,
+        query: str,
+        since_year: int | None = None,
+        *,
+        today: date | None = None,
     ) -> list[tuple[Vulnerability, dict[str, Any]]]:
-        params: dict[str, Any] = {"keywordSearch": query, "keywordExactMatch": ""}
-        if since_year is not None:
-            params["pubStartDate"] = f"{since_year}-01-01T00:00:00.000"
+        base: dict[str, Any] = {"keywordSearch": query, "keywordExactMatch": ""}
         headers = {"apiKey": self._api_key} if self._api_key else None
+        windows = nvd_pub_windows(since_year, today=today) if since_year is not None else [None]
+        results: list[tuple[Vulnerability, dict[str, Any]]] = []
+        for index, window in enumerate(windows):
+            if index and self._pause:
+                self._pause(0.6 if self._api_key else 6.0)
+            params = dict(base)
+            if window is not None:
+                params["pubStartDate"], params["pubEndDate"] = window
+            results.extend(self._hits(params, headers, query))
+        return results
 
+    def _hits(self, params, headers, query):
         response = self._get(NVD_CVES_URL, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         payload = response.json()
-
-        results: list[tuple[Vulnerability, dict[str, Any]]] = []
+        results = []
         for item in payload.get("vulnerabilities", []):
             cleaned = strip_non_nist_cvss_metrics(strip_cpe_from_raw(item))
             vulnerability = normalize_nvd_item(cleaned)
-            evidence = {"query": query, "nvd": cleaned}
-            results.append((vulnerability, evidence))
+            results.append((vulnerability, {"query": query, "nvd": cleaned}))
         return results

@@ -30,9 +30,7 @@ from updater.infrastructure.sources.zdi import ZdiSource
 from updater.presentation.discord_bot import commands as cmd
 from updater.presentation.discord_bot.config import BotConfig, ConfigError, load_config
 from updater.presentation.discord_bot.formatting import (
-    build_finding_embed,
     build_summary_message,
-    build_version_update_message,
     group_findings,
 )
 from updater.presentation.discord_bot.permissions import has_admin_role
@@ -530,7 +528,7 @@ def _build_services(config: BotConfig) -> cmd.Services:
         version_repo=MongoTargetVersionRepository(db.db),
         vulnerability_repo=MongoVulnerabilityRepository(db.db),
         target_vulnerability_repo=MongoTargetVulnerabilityRepository(db.db),
-        sources=[NvdSource(), ZdiSource()],
+        sources=[NvdSource(api_key=config.nvd_api_key), ZdiSource()],
         vendor_config_repo=MongoVendorConfigRepository(db.db),
         browser=CloakBrowserAdapter(),
         http=HttpFetchAdapter(),
@@ -602,37 +600,34 @@ async def _run_notify(services: cmd.Services, channel, tz, *, sync_started_at: d
         log.exception("scheduled notify failed (snapshot)")
         return
 
+    now = datetime.now(tz)
     findings = group_findings(snapshot)
-    if sync_started_at is not None:
-        findings = cmd.filter_findings_to_created_since(findings, vulnerabilities, sync_started_at)
+    since = sync_started_at if sync_started_at is not None else notify_window_start(now)
+    findings = cmd.filter_findings_to_created_since(findings, vulnerabilities, since)
+
+    targets = await asyncio.to_thread(services.target_repo.list_all)
+    version_changes = []
+    try:
+        recent = await asyncio.to_thread(
+            services.version_repo.list_recent_changes, notify_window_start(now)
+        )
+        version_changes = version_changes_from_docs(recent, targets)
+    except Exception:
+        log.exception("scheduled notify: version section failed")
+
     summary = build_summary_message(
-        report_date=datetime.now(tz).date(),
-        targets_processed=len(services.target_repo.list_all()),
-        new_findings=len(findings),
+        report_date=now.date(),
+        stored_targets=len(targets),
+        stored_vulnerabilities=len(vulnerabilities),
+        new_findings=findings,
         errors=0,
+        version_changes=version_changes,
     )
     try:
         await channel.send(content=summary)
     except Exception:
         log.exception("scheduled notify: summary send failed")
         return
-    for finding in findings:
-        try:
-            await channel.send(embed=build_finding_embed(finding))
-        except Exception:
-            log.exception("scheduled notify: finding send failed advisory=%s", finding.get("advisory_id"))
-
-    try:
-        now = datetime.now(tz)
-        recent = await asyncio.to_thread(services.version_repo.list_recent_changes, notify_window_start(now))
-        targets = await asyncio.to_thread(services.target_repo.list_all)
-        version_changes = version_changes_from_docs(recent, targets)
-        if version_changes:
-            await channel.send(
-                content=build_version_update_message(report_date=now.date(), changes=version_changes)
-            )
-    except Exception:
-        log.exception("scheduled notify: version section failed")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -56,6 +56,27 @@ def test_load_config_reads_all_fields(tmp_path):
     )
 
 
+def test_load_config_reads_optional_nvd_api_key(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DISCORD_TOKEN=tok\nDISCORD_GUILD_ID=111\nDISCORD_CHANNEL_ID=222\n"
+        "DISCORD_ADMIN_ROLE_ID=333\nSYNC_TIME=08:00\nNOTIFY_TIME=09:30\n"
+        "NVD_API_KEY=nvd-secret\n"
+    )
+    config = load_config(env_file)
+    assert config.nvd_api_key == "nvd-secret"
+
+
+def test_load_config_nvd_api_key_defaults_none(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DISCORD_TOKEN=tok\nDISCORD_GUILD_ID=111\nDISCORD_CHANNEL_ID=222\n"
+        "DISCORD_ADMIN_ROLE_ID=333\nSYNC_TIME=08:00\nNOTIFY_TIME=09:30\n"
+    )
+    config = load_config(env_file)
+    assert config.nvd_api_key is None
+
+
 def test_load_config_defaults_to_utc_plus_7(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(

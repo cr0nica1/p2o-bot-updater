@@ -166,6 +166,7 @@ NOTIFY_TIME=09:15
 TIMEZONE=UTC+7
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DATABASE=pwn2own_updater
+NVD_API_KEY=                      # optional; authenticates NVD requests
 ```
 
 Run tests:
@@ -274,12 +275,22 @@ firmware-lookup \
 
 ### Target version checkers
 
-Ten Pwn2Own targets ship on-demand version checkers that read each vendor's
-release/changelog page directly. Seed them into MongoDB:
+Eleven Pwn2Own targets are seeded; ten of them ship on-demand version checkers
+that read each vendor's release/changelog page directly. Samsung Galaxy S26 is a
+CVE target only (no version checker — daily scan skips it, `/check-version`
+reports no vendor config). Seed also writes CVE aliases (Claude Code, pgvector,
+Philips Hue Bridge, Home Assistant) and Chroma `search_names=["ChromaDB"]` so
+NVD is queried as `ChromaDB` only:
 
 ```bash
 version-config seed
+# → Seeded 11 targets and 10 version checks.
+
+# After deploy, drop leftover Chroma false-positive links:
+version-config purge-chroma
 ```
+
+Optional `NVD_API_KEY` in `.env` authenticates NVD requests (higher rate limit).
 
 Then check a target's current version by its `/list-targets` number:
 
@@ -300,18 +311,24 @@ version-config add --vendor Chroma --target Chroma \
 
 On Discord: `/set-version-check` and `/check-version`.
 
+`samples/version_checks.csv` matches seed (no Samsung SMR; pgvector uses
+`raw.githubusercontent.com`; includes Oura Ring 5). Do not re-import the old
+Samsung checker via `/import-vendor-firmware`.
+
 #### Daily scan and update notifications
 
 The bot scans every target-bound version checker once per day, as part of the
-existing daily sync/notify schedule (`/set-schedule`, `/show-schedule`). When a
-target's version changes, it posts an update to the notify channel:
+existing daily sync/notify schedule (`/set-schedule`, `/show-schedule`). Daily
+notify is a short text: new discoveries plus already stored totals (and version
+updates when a checker changes):
 
 ```
-🔔 Version updates — 2026-08-18
-• Chroma: 1.5.9 → 1.6.0
+Daily update — 2026-08-19
+New discoveries: 0
+Already stored: 11 targets, 58 vulnerabilities
 ```
 
-The first scan of each target records a baseline silently (no notification);
+The first scan of each target records a baseline silently (no version line);
 only later changes are announced. Run a scan on demand with `/scan-versions`
 (admin only).
 

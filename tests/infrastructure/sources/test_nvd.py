@@ -345,3 +345,65 @@ def test_nvd_source_sends_api_key_as_header():
     assert result == []
     assert calls[0]["headers"] == {"apiKey": "test-secret-key"}
     assert "apiKey" not in calls[0]["params"]
+
+
+from datetime import date
+
+from updater.infrastructure.sources.nvd import NvdSource, nvd_pub_windows
+
+
+def test_nvd_pub_windows_splits_into_120_day_chunks():
+    windows = nvd_pub_windows(2026, today=date(2026, 8, 19))
+    assert windows == [
+        ("2026-01-01T00:00:00.000", "2026-04-30T23:59:59.999"),
+        ("2026-05-01T00:00:00.000", "2026-08-19T23:59:59.999"),
+    ]
+
+
+def test_nvd_pub_windows_empty_when_year_in_future():
+    assert nvd_pub_windows(2027, today=date(2026, 8, 19)) == []
+
+
+def test_nvd_search_without_since_year_omits_dates():
+    captured = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"vulnerabilities": []}
+
+    def fake_get(url, **kwargs):
+        captured.append(kwargs.get("params"))
+        return FakeResponse()
+
+    NvdSource(get=fake_get).search(Target(name="LiteLLM"), "LiteLLM")
+    assert "pubStartDate" not in captured[0]
+    assert "pubEndDate" not in captured[0]
+
+
+def test_nvd_search_with_since_year_sends_start_and_end_per_window():
+    captured = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"vulnerabilities": []}
+
+    def fake_get(url, **kwargs):
+        captured.append(kwargs.get("params"))
+        return FakeResponse()
+
+    NvdSource(get=fake_get).search(
+        Target(name="LiteLLM"), "LiteLLM", since_year=2026, today=date(2026, 8, 19)
+    )
+    assert len(captured) == 2
+    assert captured[0]["pubStartDate"] == "2026-01-01T00:00:00.000"
+    assert captured[0]["pubEndDate"] == "2026-04-30T23:59:59.999"
+    assert captured[1]["pubStartDate"] == "2026-05-01T00:00:00.000"
+    assert captured[1]["pubEndDate"] == "2026-08-19T23:59:59.999"
+    assert captured[0]["keywordSearch"] == "LiteLLM"
+    assert "keywordExactMatch" in captured[0]

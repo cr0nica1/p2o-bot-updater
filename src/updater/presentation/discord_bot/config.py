@@ -46,6 +46,7 @@ class BotConfig:
     mongodb_uri: str
     mongodb_database: str
     tz: timezone = UTC_PLUS_7
+    nvd_api_key: str | None = None
 
 
 _REQUIRED_STR = ("DISCORD_TOKEN",)
@@ -108,6 +109,7 @@ def load_config(env_path: Path) -> BotConfig:
         mongodb_uri=(values.get("MONGODB_URI") or "mongodb://localhost:27017").strip(),
         mongodb_database=(values.get("MONGODB_DATABASE") or "pwn2own_updater").strip(),
         tz=_parse_tz(values.get("TIMEZONE")),
+        nvd_api_key=(values.get("NVD_API_KEY") or "").strip() or None,
     )
 
 
