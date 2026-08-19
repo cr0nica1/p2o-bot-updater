@@ -11,6 +11,7 @@ from updater.domain.models import Target, TargetVersion
 KNOWN_COLUMNS = {
     "name",
     "aliases",
+    "search_names",
     "vendor",
     "vendor_alias",
     "category",
@@ -48,6 +49,7 @@ class CsvTargetLoader:
                 target = Target(
                     name=name,
                     aliases=_split_aliases(row.get("aliases")),
+                    search_names=_split_aliases(row.get("search_names")),
                     vendor=_clean_optional(row.get("vendor")),
                     vendor_alias=_clean_optional(row.get("vendor_alias")),
                     category=_clean_optional(row.get("category")),

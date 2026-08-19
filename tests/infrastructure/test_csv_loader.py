@@ -81,3 +81,13 @@ def test_loads_vendor_alias_as_known_target_field(tmp_path: Path):
     assert rows.errors == []
     assert rows.items[0].target.vendor_alias == "mf654cdw"
     assert rows.items[0].target.raw_metadata == {"notes": "contest target"}
+
+
+def test_loads_search_names_semicolon_list(tmp_path: Path):
+    csv_path = tmp_path / "targets.csv"
+    csv_path.write_text(
+        "name,aliases,search_names\nChroma,,ChromaDB\n",
+        encoding="utf-8",
+    )
+    rows = CsvTargetLoader().load(csv_path)
+    assert rows.items[0].target.search_names == ["ChromaDB"]

@@ -445,3 +445,11 @@ def test_target_version_document_round_trips_previous_version():
     legacy = dict(document)
     del legacy["previous_version"]
     assert target_version_from_document(legacy).previous_version is None
+
+
+def test_target_document_round_trips_search_names():
+    target = Target(name="Chroma", search_names=["ChromaDB"])
+    document = target_to_document(target)
+    assert document["search_names"] == ["ChromaDB"]
+    loaded = target_from_document({**document, "_id": "x", "created_at": target.created_at, "updated_at": target.updated_at})
+    assert loaded.search_names == ["ChromaDB"]
