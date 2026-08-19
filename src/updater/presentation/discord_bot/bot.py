@@ -528,7 +528,7 @@ def _build_services(config: BotConfig) -> cmd.Services:
         version_repo=MongoTargetVersionRepository(db.db),
         vulnerability_repo=MongoVulnerabilityRepository(db.db),
         target_vulnerability_repo=MongoTargetVulnerabilityRepository(db.db),
-        sources=[NvdSource(), ZdiSource()],
+        sources=[NvdSource(api_key=config.nvd_api_key), ZdiSource()],
         vendor_config_repo=MongoVendorConfigRepository(db.db),
         browser=CloakBrowserAdapter(),
         http=HttpFetchAdapter(),
