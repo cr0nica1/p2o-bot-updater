@@ -105,3 +105,68 @@ def test_vendor_config_remove_deletes_config(capsys):
     assert code == 0
     assert repo.configs == {}
     assert "Removed vendor config: Canon" in capsys.readouterr().out
+
+
+def test_seed_passes_version_repo(monkeypatch, capsys):
+    captured = {}
+
+    class FakeConfig:
+        mongodb_uri = "mongodb://localhost:27017"
+        mongodb_database = "pwn2own_updater"
+
+    class FakeDB:
+        def __init__(self, *a, **k):
+            self.db = object()
+
+    def fake_seed(target_repo, vendor_repo, version_repo=None):
+        captured["version_repo"] = version_repo
+        captured["target_repo"] = type(target_repo).__name__
+        captured["vendor_repo"] = type(vendor_repo).__name__
+        return {"targets": 11, "configs": 10}
+
+    monkeypatch.setattr("updater.cli.vendor_config.load_config", lambda path: FakeConfig())
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoDatabase", FakeDB)
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoTargetRepository", lambda db: type("T", (), {})())
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoVendorConfigRepository", lambda db: type("V", (), {})())
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoTargetVersionRepository", lambda db: type("Ver", (), {"kind": "version"})())
+    # seed is imported inside the seed branch — patch the module attribute
+    import updater.infrastructure.seed.version_checks as seed_mod
+    monkeypatch.setattr(seed_mod, "seed", fake_seed)
+
+    code = main(["seed"])
+    assert code == 0
+    assert captured["version_repo"] is not None
+    assert "Seeded 11 targets and 10 version checks." in capsys.readouterr().out
+
+
+def test_purge_chroma_prints_counts(monkeypatch, capsys):
+    class Result:
+        unlinked = 17
+        deleted_vulnerabilities = 17
+
+    class FakeConfig:
+        mongodb_uri = "mongodb://localhost:27017"
+        mongodb_database = "pwn2own_updater"
+
+    class FakeDB:
+        def __init__(self, *a, **k):
+            self.db = object()
+
+    class FakeService:
+        def __init__(self, *a, **k):
+            pass
+        def run(self):
+            return Result()
+
+    monkeypatch.setattr("updater.cli.vendor_config.load_config", lambda path: FakeConfig())
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoDatabase", FakeDB)
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoTargetRepository", lambda db: object())
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoVulnerabilityRepository", lambda db: object())
+    monkeypatch.setattr("updater.infrastructure.mongo.MongoTargetVulnerabilityRepository", lambda db: object())
+    monkeypatch.setattr("updater.application.purge_chroma.PurgeChromaService", FakeService)
+
+    code = main(["purge-chroma"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "unlinked=17" in out
+    assert "deleted_vulnerabilities=17" in out

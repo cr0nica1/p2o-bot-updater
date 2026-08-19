@@ -37,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--vendor", required=True)
 
     subparsers.add_parser("seed")
+    subparsers.add_parser("purge-chroma")
     return parser
 
 
@@ -44,6 +45,45 @@ def main(argv: list[str] | None = None, *, repo=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "seed":
+            from updater.infrastructure.mongo import (
+                MongoDatabase,
+                MongoTargetRepository,
+                MongoTargetVersionRepository,
+                MongoVendorConfigRepository,
+            )
+            from updater.infrastructure.seed.version_checks import seed as seed_version_checks
+
+            config = load_config(Path(args.env))
+            db = MongoDatabase(uri=config.mongodb_uri, database=config.mongodb_database)
+            counts = seed_version_checks(
+                MongoTargetRepository(db.db),
+                MongoVendorConfigRepository(db.db),
+                MongoTargetVersionRepository(db.db),
+            )
+            print(f"Seeded {counts['targets']} targets and {counts['configs']} version checks.")
+            return 0
+        if args.command == "purge-chroma":
+            from updater.application.purge_chroma import PurgeChromaService
+            from updater.infrastructure.mongo import (
+                MongoDatabase,
+                MongoTargetRepository,
+                MongoTargetVulnerabilityRepository,
+                MongoVulnerabilityRepository,
+            )
+
+            config = load_config(Path(args.env))
+            db = MongoDatabase(uri=config.mongodb_uri, database=config.mongodb_database)
+            result = PurgeChromaService(
+                MongoTargetRepository(db.db),
+                MongoVulnerabilityRepository(db.db),
+                MongoTargetVulnerabilityRepository(db.db),
+            ).run()
+            print(
+                f"Chroma purge: unlinked={result.unlinked} "
+                f"deleted_vulnerabilities={result.deleted_vulnerabilities}"
+            )
+            return 0
         repository = repo or _build_repo(Path(args.env))
         if args.command == "add":
             config = VendorConfig(
@@ -74,17 +114,6 @@ def main(argv: list[str] | None = None, *, repo=None) -> int:
                 return 0
             print(f"Vendor config not found: {args.vendor}", file=sys.stderr)
             return 1
-        if args.command == "seed":
-            from updater.infrastructure.mongo import MongoDatabase, MongoTargetRepository
-            from updater.infrastructure.seed.version_checks import seed as seed_version_checks
-
-            config = load_config(Path(args.env))
-            db = MongoDatabase(uri=config.mongodb_uri, database=config.mongodb_database)
-            counts = seed_version_checks(
-                MongoTargetRepository(db.db), MongoVendorConfigRepository(db.db)
-            )
-            print(f"Seeded {counts['targets']} targets and {counts['configs']} version checks.")
-            return 0
     except (ConfigError, FirmwareLookupError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
