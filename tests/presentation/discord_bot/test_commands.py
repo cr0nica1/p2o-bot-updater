@@ -80,6 +80,9 @@ class FakeVersionRepo:
     def mark_seen(self, target_id, *, version):
         pass
 
+    def list_recent_changes(self, since):
+        return []
+
 
 class FakeVulnRepo:
     def __init__(self, items=None):
@@ -1287,13 +1290,59 @@ async def test_run_notify_only_sends_vulnerabilities_created_since_sync_start():
         )
 
     assert sent[0]["content"] == (
-        "Daily Vulnerability Report — 2026-05-21\n"
-        "Targets processed: 1\n"
-        "New findings: 1\n"
-        "Errors: 0"
+        "Daily update — 2026-05-21\n"
+        "New discoveries: 1\n"
+        "• CVE-2024-0002  HIGH  Canon\n"
+        "Already stored: 1 targets, 2 vulnerabilities"
     )
-    assert len(sent) == 2
-    assert sent[1]["embed"].title == "CVE-2024-0002"
+    assert len(sent) == 1
+    assert "embed" not in sent[0]
+
+
+async def test_run_notify_without_sync_start_only_lists_findings_from_last_24h():
+    from unittest.mock import patch
+
+    from updater.presentation.discord_bot.bot import _run_notify
+
+    old = Vulnerability(
+        id="old-vuln",
+        advisory_id="CVE-2024-0001",
+        severity="LOW",
+        created_at=datetime(2026, 5, 19, 12, 0, tzinfo=timezone.utc),
+    )
+    fresh = Vulnerability(
+        id="fresh-vuln",
+        advisory_id="CVE-2024-0002",
+        severity="HIGH",
+        created_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+    target = Target(id="t1", name="Canon")
+    services = _services(
+        target_repo=FakeTargetRepo([target]),
+        vuln_repo=FakeVulnRepo([old, fresh]),
+        link_repo=FakeLinkRepo([
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="old-vuln"),
+            TargetVulnerability(target_id="t1", target_name="Canon", vulnerability_id="fresh-vuln"),
+        ]),
+    )
+    sent = []
+
+    class FakeChannel:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    fake_now = datetime(2026, 5, 21, 14, 0, 0, tzinfo=timezone.utc)
+    with patch("updater.presentation.discord_bot.bot.datetime") as mock_dt:
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        await _run_notify(services, FakeChannel(), timezone.utc)
+
+    content = sent[0]["content"]
+    assert "New discoveries: 1" in content
+    assert "CVE-2024-0002" in content
+    assert "CVE-2024-0001" not in content
+    assert "Already stored: 1 targets, 2 vulnerabilities" in content
+    assert len(sent) == 1
 
 
 async def test_run_sync_returns_sync_start_timestamp():
