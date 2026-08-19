@@ -273,6 +273,9 @@ class MongoTargetVersionRepository:
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
 
+    def delete_by_target(self, target_id: str) -> int:
+        return self.collection.delete_many({"target_id": target_id}).deleted_count
+
     def find_latest(self, target_id: str) -> TargetVersion | None:
         document = self.collection.find_one({"target_id": target_id, "is_latest": True})
         return target_version_from_document(document) if document else None
@@ -452,3 +455,8 @@ class MongoTargetVulnerabilityRepository:
 
     def delete_by_target(self, target_id: str) -> int:
         return self.collection.delete_many({"target_id": target_id}).deleted_count
+
+    def delete_link(self, target_id: str, vulnerability_id: str) -> int:
+        return self.collection.delete_many(
+            {"target_id": target_id, "vulnerability_id": vulnerability_id}
+        ).deleted_count
