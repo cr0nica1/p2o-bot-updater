@@ -105,16 +105,78 @@ def test_embed_stays_under_discord_size_limits():
 def test_summary_message_format():
     msg = build_summary_message(
         report_date=date(2026, 5, 20),
-        targets_processed=5,
-        new_findings=3,
+        stored_targets=5,
+        stored_vulnerabilities=12,
+        new_findings=[
+            {
+                "advisory_id": "CVE-2024-0002",
+                "aliases": [],
+                "severity": "HIGH",
+                "cvss_score": 7.8,
+                "target_names": ["Canon"],
+            }
+        ],
         errors=0,
     )
     assert msg == (
-        "Daily Vulnerability Report — 2026-05-20\n"
-        "Targets processed: 5\n"
-        "New findings: 3\n"
-        "Errors: 0"
+        "Daily update — 2026-05-20\n"
+        "New discoveries: 1\n"
+        "• CVE-2024-0002  HIGH  7.8  Canon\n"
+        "Already stored: 5 targets, 12 vulnerabilities"
     )
+
+
+def test_summary_message_zero_new_findings_still_shows_stored_totals():
+    msg = build_summary_message(
+        report_date=date(2026, 8, 19),
+        stored_targets=11,
+        stored_vulnerabilities=58,
+        new_findings=[],
+        errors=0,
+    )
+    assert msg == (
+        "Daily update — 2026-08-19\n"
+        "New discoveries: 0\n"
+        "Already stored: 11 targets, 58 vulnerabilities"
+    )
+
+
+def test_summary_message_includes_errors_and_version_updates():
+    from updater.application.version_scan import VersionChange
+
+    msg = build_summary_message(
+        report_date=date(2026, 8, 19),
+        stored_targets=11,
+        stored_vulnerabilities=58,
+        new_findings=[],
+        errors=2,
+        version_changes=[VersionChange("Chroma", "1.5.9", "1.6.0", "u")],
+    )
+    assert "Errors: 2" in msg
+    assert "Version updates: 1" in msg
+    assert "• Chroma: 1.5.9 → 1.6.0" in msg
+
+
+def test_summary_message_truncates_long_new_finding_list():
+    findings = [
+        {
+            "advisory_id": f"CVE-2026-{index:05d}",
+            "aliases": [],
+            "severity": "LOW",
+            "cvss_score": 1.0,
+            "target_names": ["Chroma"],
+        }
+        for index in range(80)
+    ]
+    msg = build_summary_message(
+        report_date=date(2026, 8, 19),
+        stored_targets=11,
+        stored_vulnerabilities=80,
+        new_findings=findings,
+        errors=0,
+    )
+    assert len(msg) <= 2000
+    assert "and" in msg and "more" in msg
 
 
 def test_group_findings_merges_same_vulnerability():

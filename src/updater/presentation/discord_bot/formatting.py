@@ -91,19 +91,106 @@ def build_finding_embed(finding: dict[str, Any]) -> discord.Embed:
     return embed
 
 
+_DISCORD_CONTENT_LIMIT = 2000
+_SEVERITY_ORDER = {
+    "CRITICAL": 0,
+    "HIGH": 1,
+    "MEDIUM": 2,
+    "LOW": 3,
+    "INFORMATIONAL": 4,
+    "NONE": 5,
+}
+
+
+def _compact_finding_line(finding: dict[str, Any]) -> str:
+    title = _pick_title(finding.get("advisory_id") or "", finding.get("aliases") or [])
+    parts = [f"• {title}", (finding.get("severity") or "NONE").upper()]
+    cvss = finding.get("cvss_score")
+    if cvss is not None and cvss != "":
+        parts.append(str(cvss))
+    targets = ", ".join(finding.get("target_names") or [])
+    if targets:
+        parts.append(targets)
+    return "  ".join(parts)
+
+
+def _sort_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        findings,
+        key=lambda finding: (
+            _SEVERITY_ORDER.get((finding.get("severity") or "NONE").upper(), 9),
+            _pick_title(finding.get("advisory_id") or "", finding.get("aliases") or []),
+        ),
+    )
+
+
 def build_summary_message(
     *,
     report_date: date,
-    targets_processed: int,
-    new_findings: int,
-    errors: int,
+    stored_targets: int,
+    stored_vulnerabilities: int,
+    new_findings: list[dict[str, Any]] | None = None,
+    errors: int = 0,
+    version_changes=None,
 ) -> str:
-    return (
-        f"Daily Vulnerability Report — {report_date.isoformat()}\n"
-        f"Targets processed: {targets_processed}\n"
-        f"New findings: {new_findings}\n"
-        f"Errors: {errors}"
+    findings = _sort_findings(list(new_findings or []))
+    header = [
+        f"Daily update — {report_date.isoformat()}",
+        f"New discoveries: {len(findings)}",
+    ]
+    extra: list[str] = []
+    if version_changes:
+        extra.append(f"Version updates: {len(version_changes)}")
+        extra.extend(
+            f"• {change.target_name}: {change.old_version} → {change.new_version}"
+            for change in version_changes
+        )
+    if errors:
+        extra.append(f"Errors: {errors}")
+    extra.append(
+        f"Already stored: {stored_targets} targets, {stored_vulnerabilities} vulnerabilities"
     )
+
+    finding_lines = [_compact_finding_line(finding) for finding in findings]
+    head = "\n".join(header)
+    footer = "\n".join(extra)
+    if not finding_lines:
+        return "\n".join([head, *extra])
+
+    included: list[str] = []
+    omitted = 0
+    for index, line in enumerate(finding_lines):
+        remaining_after = len(finding_lines) - index - 1
+        candidate = included + [line]
+        rest = finding_lines[index + 1 :]
+        all_body = "\n".join(candidate + rest)
+        if _message_size(head, all_body, footer) <= _DISCORD_CONTENT_LIMIT:
+            included.append(line)
+            continue
+        suffix = f"…and {remaining_after} more" if remaining_after else ""
+        body_with_suffix = "\n".join(candidate + ([suffix] if suffix else []))
+        if suffix and _message_size(head, body_with_suffix, footer) <= _DISCORD_CONTENT_LIMIT:
+            included.append(line)
+            omitted = remaining_after
+            break
+        omitted = remaining_after + 1
+        break
+
+    if omitted and included:
+        included.append(f"…and {omitted} more")
+    elif omitted and not included:
+        included.append(f"…and {omitted} more")
+
+    return "\n".join([head, *included, *extra])
+
+
+def _message_size(head: str, body: str, footer: str) -> int:
+    parts = [head]
+    if body:
+        parts.append(body)
+    if footer:
+        parts.append(footer)
+    return len("\n".join(parts))
 
 
 def build_version_update_message(*, report_date: date, changes) -> str:

@@ -33,6 +33,7 @@ def target_to_document(target: Target) -> dict[str, Any]:
         "name": target.name,
         "normalized_name": target.normalized_name,
         "aliases": list(target.aliases),
+        "search_names": list(target.search_names),
         "vendor": target.vendor,
         "vendor_alias": target.vendor_alias,
         "category": target.category,
@@ -47,6 +48,7 @@ def target_from_document(document: dict[str, Any]) -> Target:
         id=_document_id(document),
         name=document["name"],
         aliases=list(document.get("aliases", [])),
+        search_names=list(document.get("search_names", [])),
         vendor=document.get("vendor"),
         vendor_alias=document.get("vendor_alias"),
         category=document.get("category"),
@@ -271,6 +273,9 @@ class MongoTargetVersionRepository:
     def delete_all(self) -> int:
         return self.collection.delete_many({}).deleted_count
 
+    def delete_by_target(self, target_id: str) -> int:
+        return self.collection.delete_many({"target_id": target_id}).deleted_count
+
     def find_latest(self, target_id: str) -> TargetVersion | None:
         document = self.collection.find_one({"target_id": target_id, "is_latest": True})
         return target_version_from_document(document) if document else None
@@ -450,3 +455,8 @@ class MongoTargetVulnerabilityRepository:
 
     def delete_by_target(self, target_id: str) -> int:
         return self.collection.delete_many({"target_id": target_id}).deleted_count
+
+    def delete_link(self, target_id: str, vulnerability_id: str) -> int:
+        return self.collection.delete_many(
+            {"target_id": target_id, "vulnerability_id": vulnerability_id}
+        ).deleted_count
